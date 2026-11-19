@@ -6,7 +6,10 @@ import type { VoiceMode, VoiceResult } from '@/lib/clinical-types';
 
 export type DictationStatus = 'idle' | 'recording' | 'processing';
 
-const MAX_RECORDING_MS = 5 * 60 * 1000;
+const MAX_RECORDING_MS = 15 * 60 * 1000;
+// Opus at 32 kbps is plenty for speech and a quarter of Chrome's 128 kbps default, so the
+// upload to the transcription service is that much smaller (about 1.2 MB per 5 minutes).
+const AUDIO_BITS_PER_SECOND = 32_000;
 const preferredMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
 
 export function useVoiceDictation<T>(mode: VoiceMode, onResult: (result: VoiceResult<T>) => void, patientId?: string) {
@@ -59,7 +62,7 @@ export function useVoiceDictation<T>(mode: VoiceMode, onResult: (result: VoiceRe
     }
 
     const mimeType = preferredMimeTypes.find((type) => MediaRecorder.isTypeSupported(type));
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: AUDIO_BITS_PER_SECOND });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (event) => {
       if (event.data.size) chunks.push(event.data);

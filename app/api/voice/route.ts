@@ -46,14 +46,19 @@ export async function POST(request: Request) {
     if (audio.byteLength > MAX_AUDIO_BYTES) return fail('فایل صوتی بیش از حد طولانی است.', 413);
 
     // A single field can sit on any form, so it gets the trauma terms, which include the general ones.
+    let started = Date.now();
     const transcript = await transcribe(audio, format, mode === 'trauma' || mode === 'text' ? traumaKeyterms : medicalKeyterms);
+    // Where the wait goes, readable in DevTools > Network > Timing.
+    const timing = [`stt;desc="Speech to text";dur=${Date.now() - started}`];
     if (!transcript) return fail('گفتاری در صدای ضبط‌شده تشخیص داده نشد.', 422);
-    if (mode === 'text') return Response.json({ transcript, draft: transcript });
+    if (mode === 'text') return Response.json({ transcript, draft: transcript }, { headers: { 'Server-Timing': timing.join(', ') } });
 
+    started = Date.now();
     const draft = mode === 'history'
       ? await structureHistory(transcript, await loadPatient(params.get('patientId')))
       : mode === 'trauma' ? await structureTrauma(transcript) : await structureOrders(transcript);
-    return Response.json({ transcript, draft });
+    timing.push(`llm;desc="Structuring";dur=${Date.now() - started}`);
+    return Response.json({ transcript, draft }, { headers: { 'Server-Timing': timing.join(', ') } });
   } catch (error) {
     if (error instanceof VoiceError) return fail(error.message, error.status);
     console.error('Voice processing failed', error);
