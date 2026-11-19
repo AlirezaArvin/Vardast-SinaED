@@ -1,0 +1,2 @@
+# Copy to .dev.vars and fill in. Used by /api/voice for speech-to-text and structuring.
+OPENROUTER_API_KEY=

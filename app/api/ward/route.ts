@@ -4,7 +4,7 @@ type RequestBody = Record<string, unknown> & { action?: string; actor?: string }
 
 const patientSelect = `SELECT
   id, national_id AS nationalId, first_name AS firstName, last_name AS lastName,
-  birth_date AS birthDate, sex, room, bed, admitted_at AS admittedAt,
+  age, sex, room, bed, admitted_at AS admittedAt,
   status, discharged_at AS dischargedAt FROM patients`;
 
 export async function GET(request: Request) {
@@ -44,11 +44,15 @@ export async function POST(request: Request) {
 
   if (body.action === 'addPatient') {
     const patient = body.patient as Record<string, string>;
+    const age = Number(patient.age);
+    if (!Number.isInteger(age) || age < 0 || age > 130) {
+      return Response.json({ error: 'سن واردشده معتبر نیست.' }, { status: 400 });
+    }
     const id = crypto.randomUUID();
     await db.prepare(
-      `INSERT INTO patients (id, national_id, first_name, last_name, birth_date, sex, room, bed, admitted_at, status, created_at)
+      `INSERT INTO patients (id, national_id, first_name, last_name, age, sex, room, bed, admitted_at, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
-    ).bind(id, patient.nationalId, patient.firstName, patient.lastName, patient.birthDate, patient.sex, patient.room, patient.bed, now, now).run();
+    ).bind(id, patient.nationalId, patient.firstName, patient.lastName, age, patient.sex, patient.room, patient.bed, now, now).run();
     await audit(id, actor, 'patient.created', `تخت ${patient.bed}`);
     return Response.json({ ok: true, id });
   }

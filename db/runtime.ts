@@ -3,7 +3,7 @@ import { env } from 'cloudflare:workers';
 const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS patients (
     id TEXT PRIMARY KEY, national_id TEXT NOT NULL UNIQUE, first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL, birth_date TEXT NOT NULL, sex TEXT NOT NULL,
+    last_name TEXT NOT NULL, age INTEGER, sex TEXT NOT NULL,
     room TEXT NOT NULL, bed TEXT NOT NULL, admitted_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active', discharged_at TEXT, created_at TEXT NOT NULL
   )`,
@@ -30,15 +30,31 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_batches_patient ON order_batches(patient_id)`,
 ];
 
+// Patients used to store a Jalali birth date; they now store the age given at admission.
+// Same statements as drizzle/0001_patient_age.sql. The age is approximated from the birth year.
+const birthDateToAgeMigration = [
+  'ALTER TABLE patients ADD COLUMN age INTEGER',
+  `UPDATE patients SET age = CAST(strftime('%Y', 'now') AS INTEGER) - 621 - CAST(substr(birth_date, 1, 4) AS INTEGER)
+   WHERE birth_date GLOB '1[0-9][0-9][0-9]*'`,
+  'ALTER TABLE patients DROP COLUMN birth_date',
+];
+
 let initialized = false;
 
 export async function getDatabase() {
   if (!initialized) {
     await env.DB.batch(schemaStatements.map((statement) => env.DB.prepare(statement)));
+    await migrateBirthDateToAge();
     await seedDemoPatients();
     initialized = true;
   }
   return env.DB;
+}
+
+async function migrateBirthDateToAge() {
+  const columns = await env.DB.prepare('PRAGMA table_info(patients)').all<{ name: string }>();
+  if (!columns.results.some((column) => column.name === 'birth_date')) return;
+  await env.DB.batch(birthDateToAgeMigration.map((statement) => env.DB.prepare(statement)));
 }
 
 async function seedDemoPatients() {
@@ -47,15 +63,15 @@ async function seedDemoPatients() {
 
   const now = new Date().toISOString();
   const demoPatients = [
-    ['p-maryam', '0012456789', 'مریم', 'احمدی', '1347/06/12', 'زن', '۳۰۲', '۲', now],
-    ['p-hossein', '0087312564', 'حسین', 'کاظمی', '1339/02/21', 'مرد', '۳۰۴', '۱', new Date(Date.now() - 86400000).toISOString()],
-    ['p-farzaneh', '0441258976', 'فرزانه', 'کریمی', '1364/09/03', 'زن', '۳۰۵', '۳', new Date(Date.now() - 172800000).toISOString()],
+    ['p-maryam', '0012456789', 'مریم', 'احمدی', 58, 'زن', '۳۰۲', '۲', now],
+    ['p-hossein', '0087312564', 'حسین', 'کاظمی', 66, 'مرد', '۳۰۴', '۱', new Date(Date.now() - 86400000).toISOString()],
+    ['p-farzaneh', '0441258976', 'فرزانه', 'کریمی', 41, 'زن', '۳۰۵', '۳', new Date(Date.now() - 172800000).toISOString()],
   ];
 
   await env.DB.batch(
     demoPatients.map((patient) =>
       env.DB.prepare(
-        `INSERT INTO patients (id, national_id, first_name, last_name, birth_date, sex, room, bed, admitted_at, status, created_at)
+        `INSERT INTO patients (id, national_id, first_name, last_name, age, sex, room, bed, admitted_at, status, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
       ).bind(...patient, now),
     ),

@@ -3,7 +3,7 @@ export type Patient = {
   nationalId: string;
   firstName: string;
   lastName: string;
-  birthDate: string;
+  age: number | null;
   sex: 'زن' | 'مرد';
   room: string;
   bed: string;
@@ -30,6 +30,8 @@ export type HistoryDraft = {
   gcsEye: string;
   gcsVerbal: string;
   gcsMotor: string;
+  physicalExam: string;
+  paraclinicalResults: string;
 };
 
 export type OrderItem = { id: string; text: string; isDone: boolean; doneAt?: string | null; createdAt: string };
@@ -42,3 +44,10 @@ export type OrderBatch = {
   approvedAt: string;
   items: OrderItem[];
 };
+
+export const consciousnessOptions = ['هوشیار', 'لتارژی', 'ابتوندیشن', 'استوپور', 'کما', 'گیجی و منگی', 'بی‌قراری'] as const;
+export const dietOptions = ['NPO', 'PO Regular', 'Type 1 Diet', 'Type 2 Diet'] as const;
+
+export type VoiceMode = 'history' | 'orders';
+export type OrdersDraft = { impression: string; diet: string; activity: string; items: string[] };
+export type VoiceResult<T> = { transcript: string; draft: T };

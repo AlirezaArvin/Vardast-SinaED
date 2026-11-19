@@ -2,6 +2,17 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+/* ASCII digits drawn with Vazirmatn's Persian digit glyphs (generated subset, OFL), so every
+   number renders in Persian while the underlying text, inputs and stored data stay Latin. */
+@font-face {
+  font-family: 'Vardast Persian Digits';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/persian-digits-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0030-0039;
+}
+
 @font-face {
   font-family: 'Vazirmatn Variable';
   font-style: normal;
@@ -41,7 +52,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: 'Vazirmatn Variable', Tahoma, Arial, sans-serif;
+  --font-sans: 'Vardast Persian Digits', 'Vazirmatn Variable', Tahoma, Arial, sans-serif;
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -83,7 +94,7 @@
 }
 
 body {
-  font-family: 'Vazirmatn Variable', Tahoma, Arial, sans-serif;
+  font-family: 'Vardast Persian Digits', 'Vazirmatn Variable', Tahoma, Arial, sans-serif;
 }
 
 button,
@@ -192,5 +203,18 @@ select {
   }
   html {
     @apply font-sans;
+  }
+  /* Tailwind v4 dropped the pointer cursor from buttons; restore it for everything clickable. */
+  button,
+  [role='button'],
+  a[href],
+  summary,
+  select,
+  input:is([type='checkbox'], [type='radio'], [type='file'], [type='submit'], [type='button'], [type='reset']) {
+    cursor: pointer;
+  }
+  :is(button, [role='button'], select, input):disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
   }
 }

@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'پرونده بخش | مدیریت بیماران بستری',
+  title: 'وردست | مدیریت بیماران بستری',
   description: 'سامانه فارسی ثبت شرح حال و دستورات بیماران بستری',
 };
 

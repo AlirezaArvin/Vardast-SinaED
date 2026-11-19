@@ -29,37 +29,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { HistoryDraft, OrderBatch, Patient } from '@/lib/clinical-types';
+import { consciousnessOptions, dietOptions } from '@/lib/clinical-types';
+import type { HistoryDraft, OrderBatch, OrdersDraft, Patient, VoiceResult } from '@/lib/clinical-types';
+
+import { useVoiceDictation, type DictationStatus } from './use-voice-dictation';
 
 type Role = 'پزشک' | 'مسئول پذیرش بخش' | 'مدیر سیستم';
 type ProfileData = { patient: Patient; history: HistoryDraft | null; orderBatches: OrderBatch[] };
-type SpeechRecognitionEventLike = { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> };
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  }
-}
 
 const emptyHistory: HistoryDraft = {
   chiefComplaint: '', onset: '', history: '', medicalHistory: '', drugHistory: '', allergyHistory: '',
   consciousness: 'هوشیار', temperature: '', pulse: '', systolic: '', diastolic: '', respiratoryRate: '', spo2: '',
-  painScore: '', gcsEye: '', gcsVerbal: '', gcsMotor: '',
+  painScore: '', gcsEye: '', gcsVerbal: '', gcsMotor: '', physicalExam: '', paraclinicalResults: '',
 };
 
-const consciousnessOptions = ['هوشیار', 'لتارژی', 'ابتوندیشن', 'استوپور', 'کما', 'گیجی و منگی', 'بی‌قراری'];
-const dietOptions = ['NPO', 'PO Regular', 'Type 1 Diet', 'Type 2 Diet'];
 const roleNames: Record<Role, string> = {
   پزشک: 'دکتر سارا محمدی',
   'مسئول پذیرش بخش': 'خانم نرگس رضایی',
@@ -87,41 +70,13 @@ function faDate(value: string) {
   }
 }
 
-function structureHistory(transcript: string): HistoryDraft {
-  const draft = { ...emptyHistory };
-  const normalized = toLatinDigits(transcript);
-  const pick = (pattern: RegExp) => normalized.match(pattern)?.[1]?.trim() ?? '';
-  draft.chiefComplaint = pick(/(?:علت مراجعه|شکایت اصلی)\s*[:،]?\s*([^.;؛]+)/i) || normalized.split(/[.؛]/)[0]?.trim() || '';
-  draft.onset = pick(/(?:شروع علائم|از)\s*[:،]?\s*([^.;؛]+)/i);
-  draft.history = pick(/(?:شرح حال)\s*[:،]?\s*([^؛]+)/i) || normalized;
-  draft.medicalHistory = pick(/(?:سابقه پزشکی|سابقه بیماری)\s*[:،]?\s*([^.;؛]+)/i);
-  draft.drugHistory = pick(/(?:سابقه دارویی|داروها)\s*[:،]?\s*([^.;؛]+)/i);
-  draft.allergyHistory = pick(/(?:حساسیت|آلرژی)\s*[:،]?\s*([^.;؛]+)/i);
-  draft.temperature = pick(/(?:دما|تب|temperature|T)\s*[:،]?\s*(\d+(?:\.\d+)?)/i);
-  draft.pulse = pick(/(?:نبض|PR)\s*[:،]?\s*(\d+)/i);
-  const bp = normalized.match(/(?:فشار خون|BP)\s*[:،]?\s*(\d{2,3})\s*[/\\]\s*(\d{2,3})/i);
-  draft.systolic = bp?.[1] ?? '';
-  draft.diastolic = bp?.[2] ?? '';
-  draft.respiratoryRate = pick(/(?:تنفس|RR)\s*[:،]?\s*(\d+)/i);
-  draft.spo2 = pick(/(?:اشباع اکسیژن|SpO2)\s*[:،]?\s*(\d+)/i);
-  draft.painScore = pick(/(?:شدت درد|درد)\s*[:،]?\s*(\d{1,2})/i);
-  const gcs = normalized.match(/GCS\s*[:،]?\s*(\d{1,2})/i);
-  if (gcs?.[1] === '15') Object.assign(draft, { gcsEye: '4', gcsVerbal: '5', gcsMotor: '6' });
-  const consciousness = consciousnessOptions.find((option) => normalized.includes(option));
-  if (consciousness) draft.consciousness = consciousness;
-  return draft;
-}
-
-function structureOrders(transcript: string) {
-  const normalized = toLatinDigits(transcript).replace(/\s+/g, ' ').trim();
-  const impression = normalized.match(/(?:تشخیص اولیه|ایمپرشن|impression)\s*[:،]?\s*([^؛.]+)/i)?.[1]?.trim() ?? '';
-  const activity = normalized.match(/(?:فعالیت|activity)\s*[:،]?\s*([^؛.]+)/i)?.[1]?.trim() ?? '';
-  const diet = dietOptions.find((option) => normalized.toLowerCase().includes(option.toLowerCase())) ?? '';
-  const items = normalized
-    .split(/[؛.\n]| سپس | و سپس /)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 2 && !/(تشخیص اولیه|ایمپرشن|impression|رژیم|diet|فعالیت|activity)/i.test(item));
-  return { impression, diet, activity, items: items.length ? items : [normalized] };
+// Dictated values fill in the draft; fields the physician did not mention keep what is already there.
+function mergeDictatedHistory(current: HistoryDraft, dictated: HistoryDraft): HistoryDraft {
+  const merged = { ...current };
+  for (const key of Object.keys(dictated) as (keyof HistoryDraft)[]) {
+    if (dictated[key]?.trim()) merged[key] = dictated[key];
+  }
+  return merged;
 }
 
 async function api(body: Record<string, unknown>) {
@@ -178,7 +133,6 @@ export function WardApp() {
     return patients.filter((patient) => `${patient.firstName} ${patient.lastName} ${patient.nationalId}`.toLowerCase().includes(term));
   }, [patients, search]);
 
-  const canAdd = role !== 'پزشک';
   const canDischarge = role !== 'مدیر سیستم';
 
   async function discharge(patient: Patient) {
@@ -213,16 +167,14 @@ export function WardApp() {
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[#0d6b63]"><Stethoscope className="size-4" /> بخش داخلی · طبقه سوم</div>
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[#0d6b63]"><Stethoscope className="size-4" /> اورژانس · بیمارستان سینا</div>
             <h1 className="text-2xl font-black tracking-tight sm:text-3xl">بیماران بستری</h1>
-            <p className="mt-1 text-sm text-slate-500">{patients.length.toLocaleString('fa-IR')} بیمار فعال در بخش حضور دارند.</p>
+            <p className="mt-1 text-sm text-slate-500">{patients.length.toLocaleString('fa-IR')} بیمار فعال در اورژانس حضور دارند.</p>
           </div>
-          <Button disabled={!canAdd} onClick={() => setAddOpen(true)} size="lg" className="h-11 bg-[#d57b36] px-4 text-white shadow-sm hover:bg-[#c46d2c]">
+          <Button onClick={() => setAddOpen(true)} size="lg" className="h-11 bg-[#d57b36] px-4 text-white shadow-sm hover:bg-[#c46d2c]">
             <UserPlus /> افزودن بیمار جدید
           </Button>
         </div>
-
-        {!canAdd && <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">افزودن بیمار در نقش مسئول پذیرش یا مدیر سیستم امکان‌پذیر است.</p>}
 
         <Card className="mb-5 border-0 bg-white shadow-sm ring-1 ring-slate-200/80">
           <CardContent>
@@ -257,7 +209,7 @@ function AppFrame({ role, setRole, children }: { role: Role; setRole: (role: Rol
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <span className="grid size-11 place-items-center rounded-2xl bg-white/12 ring-1 ring-white/20"><HeartPulse className="size-6" /></span>
-            <div><p className="text-lg font-bold">پرونده بخش</p><p className="hidden text-xs text-teal-100 sm:block">سامانه ثبت و پیگیری بیماران</p></div>
+            <div><p className="text-lg font-bold">وردست</p><p className="hidden text-xs text-teal-100 sm:block">سامانه ثبت و پیگیری بیماران</p></div>
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden text-left sm:block"><p className="text-sm font-semibold">{roleNames[role]}</p><p className="text-xs text-teal-100">{role}</p></div>
@@ -308,6 +260,8 @@ function AddPatientDialog({ open, onOpenChange, actor, onSaved }: { open: boolea
     const values = Object.fromEntries(new FormData(event.currentTarget).entries()) as Record<string, string>;
     values.nationalId = toLatinDigits(values.nationalId).replace(/\D/g, '');
     if (!isValidNationalId(values.nationalId)) { setError('کد ملی واردشده معتبر نیست.'); return; }
+    values.age = toLatinDigits(values.age).trim();
+    if (!/^\d{1,3}$/.test(values.age) || Number(values.age) > 130) { setError('سن واردشده معتبر نیست.'); return; }
     setSaving(true);
     try {
       await api({ action: 'addPatient', patient: values, actor });
@@ -326,7 +280,7 @@ function AddPatientDialog({ open, onOpenChange, actor, onSaved }: { open: boolea
           <Field label="نام"><Input required name="firstName" /></Field>
           <Field label="نام خانوادگی"><Input required name="lastName" /></Field>
           <Field label="کد ملی"><Input required name="nationalId" inputMode="numeric" maxLength={10} dir="ltr" /></Field>
-          <Field label="تاریخ تولد"><Input required name="birthDate" placeholder="۱۳۶۸/۰۲/۰۹" /></Field>
+          <Field label="سن (سال)"><Input required name="age" inputMode="numeric" maxLength={3} dir="ltr" /></Field>
           <Field label="جنسیت"><select required name="sex" className="control"><option value="زن">زن</option><option value="مرد">مرد</option></select></Field>
           <Field label="شماره اتاق"><Input required name="room" /></Field>
           <Field label="شماره تخت"><Input required name="bed" /></Field>
@@ -357,7 +311,7 @@ function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, can
         <CardContent className="grid gap-5 md:grid-cols-[1fr_auto] md:items-center">
           <div className="flex items-center gap-4">
             <span className="grid size-16 place-items-center rounded-2xl bg-white/15 text-xl font-black ring-1 ring-white/20">{patient.firstName[0]}{patient.lastName[0]}</span>
-            <div><h1 className="text-2xl font-black">{patient.firstName} {patient.lastName}</h1><p className="mt-1 text-sm text-teal-100">کد ملی: <span dir="ltr">{patient.nationalId}</span> · {patient.sex}</p></div>
+            <div><h1 className="text-2xl font-black">{patient.firstName} {patient.lastName}</h1><p className="mt-1 text-sm text-teal-100">کد ملی: <span dir="ltr">{patient.nationalId}</span> · {patient.sex}{patient.age != null && ` · ${patient.age} ساله`}</p></div>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-xs text-teal-100">محل بستری</p><p className="mt-1 font-bold">اتاق {patient.room} · تخت {patient.bed}</p></div>
@@ -390,28 +344,15 @@ function Summary({ data, onHistory, onOrders }: { data: ProfileData; onHistory: 
 }
 
 function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initial: HistoryDraft | null; patientId: string; actor: string; canEdit: boolean; onSaved: () => Promise<void> }) {
-  const [draft, setDraft] = useState<HistoryDraft>(initial ?? emptyHistory);
+  const [draft, setDraft] = useState<HistoryDraft>({ ...emptyHistory, ...initial });
   const [saving, setSaving] = useState(false);
-  const [listening, setListening] = useState(false);
-  const recognition = useRef<SpeechRecognitionLike | null>(null);
+  const [transcript, setTranscript] = useState('');
+  const voice = useVoiceDictation<HistoryDraft>('history', (result) => {
+    setDraft((current) => mergeDictatedHistory(current, result.draft));
+    setTranscript(result.transcript);
+  }, patientId);
   const gcsTotal = ['gcsEye', 'gcsVerbal', 'gcsMotor'].every((key) => draft[key as keyof HistoryDraft]) ? Number(draft.gcsEye) + Number(draft.gcsVerbal) + Number(draft.gcsMotor) : null;
   const update = (key: keyof HistoryDraft, value: string) => setDraft((current) => ({ ...current, [key]: value }));
-
-  function applyTranscript(transcript: string) {
-    setDraft(structureHistory(transcript));
-  }
-
-  function startVoice() {
-    const Constructor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Constructor) { applyTranscript('علت مراجعه تنگی نفس و سرفه. شروع علائم از سه روز قبل. شرح حال بیمار با تشدید تنگی نفس مراجعه کرده است. سابقه پزشکی فشار خون. داروها لوزارتان. حساسیت ندارد. هوشیار. دما 37.8، نبض 96، فشار خون 135/85، تنفس 22، اشباع اکسیژن 93، درد 2، GCS 15.'); return; }
-    const instance = new Constructor();
-    instance.lang = 'fa-IR'; instance.continuous = true; instance.interimResults = false;
-    let transcript = '';
-    instance.onresult = (event) => { for (let index = 0; index < event.results.length; index += 1) if (event.results[index].isFinal) transcript += ` ${event.results[index][0].transcript}`; };
-    instance.onend = () => { setListening(false); if (transcript.trim()) applyTranscript(transcript); };
-    instance.onerror = () => setListening(false);
-    recognition.current = instance; setListening(true); instance.start();
-  }
 
   async function save() {
     setSaving(true);
@@ -420,11 +361,10 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initia
 
   return (
     <div className="space-y-5">
-      <VoiceBanner listening={listening} onStart={startVoice} onStop={() => recognition.current?.stop()} disabled={!canEdit} title="ثبت صوتی شرح حال" subtitle="پس از پایان ضبط، فقط پیش‌نویس ساختاریافته برای ویرایش نمایش داده می‌شود." />
+      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={!canEdit} title="ثبت صوتی شرح حال" subtitle="صدا توسط وردست پردازش و در فرم زیر جای‌گذاری می‌شود. پیش از ذخیره، حتما همه فیلدها را بازبینی کنید." startLabel="ضبط صوتی شرح حال" />
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><CardTitle className="font-bold">پیش‌نویس ساختاریافته شرح حال</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2">
         <Field label="علت مراجعه" className="sm:col-span-2"><Textarea disabled={!canEdit} value={draft.chiefComplaint} onChange={(event) => update('chiefComplaint', event.target.value)} /></Field>
-        <Field label="زمان شروع علائم بیماری"><Input disabled={!canEdit} value={draft.onset} onChange={(event) => update('onset', event.target.value)} /></Field>
-        <Field label="وضعیت هوشیاری"><select disabled={!canEdit} value={draft.consciousness} onChange={(event) => update('consciousness', event.target.value)} className="control">{consciousnessOptions.map((option) => <option key={option}>{option}</option>)}</select></Field>
+        <Field label="زمان شروع علائم بیماری" className="sm:col-span-2"><Input disabled={!canEdit} value={draft.onset} onChange={(event) => update('onset', event.target.value)} /></Field>
         <Field label="شرح حال" className="sm:col-span-2"><Textarea disabled={!canEdit} className="min-h-28" value={draft.history} onChange={(event) => update('history', event.target.value)} /></Field>
         <Field label="سابقه پزشکی"><Textarea disabled={!canEdit} value={draft.medicalHistory} onChange={(event) => update('medicalHistory', event.target.value)} /></Field>
         <Field label="سابقه دارویی"><Textarea disabled={!canEdit} value={draft.drugHistory} onChange={(event) => update('drugHistory', event.target.value)} /></Field>
@@ -437,12 +377,19 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initia
           <MiniField label="RR/min" value={draft.respiratoryRate} onChange={(value) => update('respiratoryRate', value)} disabled={!canEdit} />
           <MiniField label="SpO2%" value={draft.spo2} onChange={(value) => update('spo2', value)} disabled={!canEdit} />
         </div></div>
-        <Field label="شدت درد (۰ تا ۱۰)"><Input disabled={!canEdit} type="number" min="0" max="10" value={draft.painScore} onChange={(event) => update('painScore', event.target.value)} /></Field>
-        <div className="rounded-xl border border-slate-200 p-4"><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">GCS</h3><Badge variant="outline">مجموع: {gcsTotal ?? '—'}</Badge></div><div className="grid grid-cols-3 gap-2">
-          <MiniField label="چشمی ۱–۴" value={draft.gcsEye} onChange={(value) => update('gcsEye', value)} disabled={!canEdit} />
-          <MiniField label="کلامی ۱–۵" value={draft.gcsVerbal} onChange={(value) => update('gcsVerbal', value)} disabled={!canEdit} />
-          <MiniField label="حرکتی ۱–۶" value={draft.gcsMotor} onChange={(value) => update('gcsMotor', value)} disabled={!canEdit} />
-        </div></div>
+        <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col justify-between gap-4">
+            <Field label="شدت درد (۰ تا ۱۰)"><Input disabled={!canEdit} type="number" min="0" max="10" value={draft.painScore} onChange={(event) => update('painScore', event.target.value)} /></Field>
+            <Field label="وضعیت هوشیاری"><select disabled={!canEdit} value={draft.consciousness} onChange={(event) => update('consciousness', event.target.value)} className="control">{consciousnessOptions.map((option) => <option key={option}>{option}</option>)}</select></Field>
+          </div>
+          <div className="flex flex-col justify-center rounded-xl border border-slate-200 p-4"><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">GCS</h3><Badge variant="outline">مجموع: {gcsTotal ?? '—'}</Badge></div><div className="grid grid-cols-3 gap-2">
+            <MiniField label="چشمی ۱–۴" value={draft.gcsEye} onChange={(value) => update('gcsEye', value)} disabled={!canEdit} />
+            <MiniField label="کلامی ۱–۵" value={draft.gcsVerbal} onChange={(value) => update('gcsVerbal', value)} disabled={!canEdit} />
+            <MiniField label="حرکتی ۱–۶" value={draft.gcsMotor} onChange={(value) => update('gcsMotor', value)} disabled={!canEdit} />
+          </div></div>
+        </div>
+        <Field label="معاینه فیزیکی (Physical Exam)" className="sm:col-span-2"><Textarea disabled={!canEdit} className="min-h-28" value={draft.physicalExam} onChange={(event) => update('physicalExam', event.target.value)} /></Field>
+        <div className="sm:col-span-2 rounded-xl border border-slate-200 p-4"><h3 className="mb-4 font-bold">نتایج پاراکلینیک (Para-clinical Results)</h3><Textarea disabled={!canEdit} aria-label="نتایج پاراکلینیک" className="min-h-28" placeholder="نتایج آزمایش‌ها، تصویربرداری، نوار قلب و…" value={draft.paraclinicalResults} onChange={(event) => update('paraclinicalResults', event.target.value)} /></div>
         <div className="sm:col-span-2 flex justify-end"><Button disabled={!canEdit || saving} onClick={() => void save()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <Save />} ذخیره شرح حال</Button></div>
       </CardContent></Card>
     </div>
@@ -451,28 +398,27 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initia
 
 function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify }: { patientId: string; batches: OrderBatch[]; actor: string; canApprove: boolean; onChanged: () => Promise<void>; notify: (message: string) => void }) {
   const isInitial = batches.length === 0;
-  const [listening, setListening] = useState(false);
-  const recognition = useRef<SpeechRecognitionLike | null>(null);
   const [impression, setImpression] = useState('');
   const [diet, setDiet] = useState('');
   const [activity, setActivity] = useState('');
   const [items, setItems] = useState<string[]>(['']);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [transcript, setTranscript] = useState('');
+  const voice = useVoiceDictation<OrdersDraft>('orders', applyDictation);
 
-  function applyTranscript(transcript: string) {
-    const structured = structureOrders(transcript);
-    setImpression(structured.impression); setDiet(structured.diet); setActivity(structured.activity); setItems(structured.items);
-  }
-
-  function startVoice() {
-    const Constructor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Constructor) { applyTranscript('تشخیص اولیه پنومونی. رژیم NPO. فعالیت استراحت در تخت. CBC و CRP انجام شود؛ رادیوگرافی قفسه سینه درخواست شود؛ اکسیژن با کانول بینی شروع شود.'); return; }
-    const instance = new Constructor(); instance.lang = 'fa-IR'; instance.continuous = true; instance.interimResults = false;
-    let transcript = '';
-    instance.onresult = (event) => { for (let index = 0; index < event.results.length; index += 1) if (event.results[index].isFinal) transcript += ` ${event.results[index][0].transcript}`; };
-    instance.onend = () => { setListening(false); if (transcript.trim()) applyTranscript(transcript); };
-    instance.onerror = () => setListening(false); recognition.current = instance; setListening(true); instance.start();
+  // Dictated orders are appended to what is already in the draft, never replace it.
+  function applyDictation({ transcript: text, draft }: VoiceResult<OrdersDraft>) {
+    if (isInitial) {
+      if (draft.impression) setImpression(draft.impression);
+      if (draft.diet) setDiet(draft.diet);
+      if (draft.activity) setActivity(draft.activity);
+    }
+    setItems((current) => {
+      const merged = [...current.filter((item) => item.trim()), ...draft.items];
+      return merged.length ? merged : [''];
+    });
+    setTranscript(text);
   }
 
   async function approve() {
@@ -482,7 +428,7 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify 
     setSaving(true);
     try {
       await api({ action: 'approveOrders', patientId, isInitial, impression, diet, activity, items, actor });
-      setImpression(''); setDiet(''); setActivity(''); setItems(['']); notify('دستورات تأیید و به‌صورت جداگانه ثبت شدند.'); await onChanged();
+      setImpression(''); setDiet(''); setActivity(''); setItems(['']); setTranscript(''); notify('دستورات تأیید و به‌صورت جداگانه ثبت شدند.'); await onChanged();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'ثبت دستورات انجام نشد.'); } finally { setSaving(false); }
   }
 
@@ -493,7 +439,7 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify 
 
   return (
     <div className="space-y-5">
-      <VoiceBanner listening={listening} onStart={startVoice} onStop={() => recognition.current?.stop()} disabled={!canApprove} title="ثبت صوتی دستورات" subtitle="گفتار استاندارد می‌شود و هر دستور پس از تأیید، جداگانه ثبت خواهد شد." />
+      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={!canApprove} title="ثبت صوتی دستورات" subtitle="هر دستور جداگانه استخراج و به پیش‌نویس اضافه می‌شود. پیش از تأیید، همه آیتم‌ها را بازبینی کنید." />
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><div className="flex items-center justify-between gap-3"><CardTitle className="font-bold">پیش‌نویس دستور جدید</CardTitle>{isInitial && <Badge className="bg-amber-50 text-amber-800">دستور اولیه بیمار</Badge>}</div></CardHeader><CardContent className="space-y-4">
         {isInitial && <div className="grid gap-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4 sm:grid-cols-3">
           <Field label="Impression · تشخیص اولیه *"><Textarea disabled={!canApprove} value={impression} onChange={(event) => setImpression(event.target.value)} /></Field>
@@ -511,9 +457,15 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify 
   );
 }
 
-function VoiceBanner({ listening, onStart, onStop, disabled, title, subtitle }: { listening: boolean; onStart: () => void; onStop: () => void; disabled: boolean; title: string; subtitle: string }) {
+function VoiceBanner({ status, error, transcript, onStart, onStop, disabled, title, subtitle, startLabel = 'شروع ضبط فارسی' }: { status: DictationStatus; error: string; transcript: string; onStart: () => void; onStop: () => void; disabled: boolean; title: string; subtitle: string; startLabel?: string }) {
+  const recording = status === 'recording';
+  const processing = status === 'processing';
   return (
-    <Card className={`border-0 shadow-sm ring-1 ${listening ? 'bg-red-50 ring-red-200' : 'bg-[#eaf6f3] ring-teal-200'}`}><CardContent className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center"><div className="flex items-center gap-3"><span className={`grid size-12 place-items-center rounded-2xl ${listening ? 'bg-red-100 text-red-700' : 'bg-white text-[#0d6b63]'}`}>{listening ? <Mic className="animate-pulse" /> : <Sparkles />}</span><div><h2 className="font-black">{title}</h2><p className="mt-1 text-xs text-slate-600">{subtitle}</p></div></div><Button disabled={disabled} onClick={listening ? onStop : onStart} className={listening ? 'bg-red-600 text-white' : 'bg-[#0d4f4a] text-white'}>{listening ? <><MicOff /> پایان ضبط و ساخت پیش‌نویس</> : <><Mic /> شروع ضبط فارسی</>}</Button></CardContent></Card>
+    <Card className={`border-0 shadow-sm ring-1 ${recording ? 'bg-red-50 ring-red-200' : 'bg-[#eaf6f3] ring-teal-200'}`}><CardContent className="space-y-3">
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center"><div className="flex items-center gap-3"><span className={`grid size-12 place-items-center rounded-2xl ${recording ? 'bg-red-100 text-red-700' : 'bg-white text-[#0d6b63]'}`}>{recording ? <Mic className="animate-pulse" /> : processing ? <LoaderCircle className="animate-spin" /> : <Sparkles />}</span><div><h2 className="font-black">{title}</h2><p className="mt-1 text-xs text-slate-600">{subtitle}</p></div></div><Button size="lg" disabled={disabled || processing} onClick={recording ? onStop : onStart} className={`h-12 shrink-0 gap-2 rounded-xl px-6 text-base font-bold shadow-sm [&_svg:not([class*='size-'])]:size-5 ${recording ? 'bg-red-600 text-white' : 'bg-[#0d4f4a] text-white'}`}>{recording ? <><MicOff /> پایان ضبط و ساخت پیش‌نویس</> : processing ? <><LoaderCircle className="animate-spin" /> در حال تبدیل گفتار…</> : <><Mic /> {startLabel}</>}</Button></div>
+      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {transcript && <details className="rounded-lg bg-white/70 p-3 text-sm"><summary className="cursor-pointer font-semibold text-slate-600">متن پیاده‌شده از صدا</summary><p dir="auto" className="mt-2 leading-7 text-slate-700">{transcript}</p></details>}
+    </CardContent></Card>
   );
 }
 
@@ -522,11 +474,11 @@ function TabButton({ active, onClick, icon, children }: { active: boolean; onCli
 }
 
 function Field({ label, children, className = '' }: { label: string; children: React.ReactNode; className?: string }) {
-  return <label className={`grid gap-1.5 text-sm font-semibold text-slate-700 ${className}`}><span>{label}</span>{children}</label>;
+  return <label className={`grid gap-1.5 text-sm text-slate-700 ${className}`}><span className="font-semibold">{label}</span>{children}</label>;
 }
 
 function MiniField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled: boolean }) {
-  return <label className="grid gap-1 text-xs font-medium text-slate-500"><span dir="ltr" className="text-center">{label}</span><Input disabled={disabled} type="number" value={value} onChange={(event) => onChange(event.target.value)} className="text-center" dir="ltr" /></label>;
+  return <label className="grid gap-1 text-xs text-slate-500"><span dir="ltr" className="text-center font-medium">{label}</span><Input disabled={disabled} type="number" value={value} onChange={(event) => onChange(event.target.value)} className="text-center" dir="ltr" /></label>;
 }
 
 function Loading() {
