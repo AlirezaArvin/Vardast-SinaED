@@ -27,13 +27,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { consciousnessOptions, dietOptions } from '@/lib/clinical-types';
 import type { HistoryDraft, OrderBatch, OrdersDraft, Patient, TraumaForm, VoiceResult } from '@/lib/clinical-types';
 
 import { PdfButton } from './pdf-button';
 import { exportHistoryPdf, exportOrdersPdf, exportTraumaPdf } from './pdf-export';
 import { emptyTraumaForm, TraumaFormEditor } from './trauma-form';
+import { DictationInput, DictationTextarea } from './dictation-field';
 import { useVoiceDictation } from './use-voice-dictation';
 import { VoiceBanner } from './voice-banner';
 
@@ -396,12 +396,12 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved, onExportPd
     <div className="space-y-5">
       <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={!canEdit} title="ثبت صوتی شرح حال" subtitle="صدا توسط وردست پردازش و در فرم زیر جای‌گذاری می‌شود. پیش از ذخیره، حتما همه فیلدها را بازبینی کنید." startLabel="ضبط صوتی شرح حال" />
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><CardTitle className="font-bold">پیش‌نویس ساختاریافته شرح حال</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2">
-        <Field label="علت مراجعه" className="sm:col-span-2"><Textarea disabled={!canEdit} value={draft.chiefComplaint} onChange={(event) => update('chiefComplaint', event.target.value)} /></Field>
-        <Field label="زمان شروع علائم بیماری" className="sm:col-span-2"><Input disabled={!canEdit} value={draft.onset} onChange={(event) => update('onset', event.target.value)} /></Field>
-        <Field label="شرح حال" className="sm:col-span-2"><Textarea disabled={!canEdit} className="min-h-28" value={draft.history} onChange={(event) => update('history', event.target.value)} /></Field>
-        <Field label="سابقه پزشکی"><Textarea disabled={!canEdit} value={draft.medicalHistory} onChange={(event) => update('medicalHistory', event.target.value)} /></Field>
-        <Field label="سابقه دارویی"><Textarea disabled={!canEdit} value={draft.drugHistory} onChange={(event) => update('drugHistory', event.target.value)} /></Field>
-        <Field label="سابقه حساسیت دارویی و غذایی" className="sm:col-span-2"><Textarea disabled={!canEdit} value={draft.allergyHistory} onChange={(event) => update('allergyHistory', event.target.value)} /></Field>
+        <Field label="علت مراجعه" className="sm:col-span-2"><DictationTextarea disabled={!canEdit} value={draft.chiefComplaint} onValueChange={(value) => update('chiefComplaint', value)} /></Field>
+        <Field label="زمان شروع علائم بیماری" className="sm:col-span-2"><DictationInput disabled={!canEdit} value={draft.onset} onValueChange={(value) => update('onset', value)} /></Field>
+        <Field label="شرح حال" className="sm:col-span-2"><DictationTextarea disabled={!canEdit} className="min-h-28" value={draft.history} onValueChange={(value) => update('history', value)} /></Field>
+        <Field label="سابقه پزشکی"><DictationTextarea disabled={!canEdit} value={draft.medicalHistory} onValueChange={(value) => update('medicalHistory', value)} /></Field>
+        <Field label="سابقه دارویی"><DictationTextarea disabled={!canEdit} value={draft.drugHistory} onValueChange={(value) => update('drugHistory', value)} /></Field>
+        <Field label="سابقه حساسیت دارویی و غذایی" className="sm:col-span-2"><DictationTextarea disabled={!canEdit} value={draft.allergyHistory} onValueChange={(value) => update('allergyHistory', value)} /></Field>
         <div className="sm:col-span-2 rounded-xl border border-slate-200 p-4"><h3 className="mb-4 font-bold">علائم حیاتی</h3><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MiniField label="T °C" value={draft.temperature} onChange={(value) => update('temperature', value)} disabled={!canEdit} />
           <MiniField label="PR/min" value={draft.pulse} onChange={(value) => update('pulse', value)} disabled={!canEdit} />
@@ -421,8 +421,8 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved, onExportPd
             <MiniField label="حرکتی ۱–۶" value={draft.gcsMotor} onChange={(value) => update('gcsMotor', value)} disabled={!canEdit} />
           </div></div>
         </div>
-        <Field label="معاینه فیزیکی (Physical Exam)" className="sm:col-span-2"><Textarea disabled={!canEdit} className="min-h-28" value={draft.physicalExam} onChange={(event) => update('physicalExam', event.target.value)} /></Field>
-        <div className="sm:col-span-2 rounded-xl border border-slate-200 p-4"><h3 className="mb-4 font-bold">نتایج پاراکلینیک (Para-clinical Results)</h3><Textarea disabled={!canEdit} aria-label="نتایج پاراکلینیک" className="min-h-28" placeholder="نتایج آزمایش‌ها، تصویربرداری، نوار قلب و…" value={draft.paraclinicalResults} onChange={(event) => update('paraclinicalResults', event.target.value)} /></div>
+        <Field label="معاینه فیزیکی (Physical Exam)" className="sm:col-span-2"><DictationTextarea disabled={!canEdit} className="min-h-28" value={draft.physicalExam} onValueChange={(value) => update('physicalExam', value)} /></Field>
+        <div className="sm:col-span-2 rounded-xl border border-slate-200 p-4"><h3 className="mb-4 font-bold">نتایج پاراکلینیک (Para-clinical Results)</h3><DictationTextarea disabled={!canEdit} aria-label="نتایج پاراکلینیک" className="min-h-28" placeholder="نتایج آزمایش‌ها، تصویربرداری، نوار قلب و…" value={draft.paraclinicalResults} onValueChange={(value) => update('paraclinicalResults', value)} /></div>
         <div className="sm:col-span-2 flex justify-end gap-2"><PdfButton disabled={!initial} disabledHint="ابتدا شرح حال را ذخیره کنید." onClick={exportPdf} /><Button disabled={!canEdit || saving} onClick={() => void save()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <Save />} ذخیره شرح حال</Button></div>
       </CardContent></Card>
     </div>
@@ -475,11 +475,11 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify,
       <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={!canApprove} title="ثبت صوتی دستورات" subtitle="هر دستور جداگانه استخراج و به پیش‌نویس اضافه می‌شود. پیش از تأیید، همه آیتم‌ها را بازبینی کنید." />
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><div className="flex items-center justify-between gap-3"><CardTitle className="font-bold">پیش‌نویس دستور جدید</CardTitle>{isInitial && <Badge className="bg-amber-50 text-amber-800">دستور اولیه بیمار</Badge>}</div></CardHeader><CardContent className="space-y-4">
         {isInitial && <div className="grid gap-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4 sm:grid-cols-3">
-          <Field label="Impression · تشخیص اولیه *"><Textarea disabled={!canApprove} value={impression} onChange={(event) => setImpression(event.target.value)} /></Field>
+          <Field label="Impression · تشخیص اولیه *"><DictationTextarea disabled={!canApprove} value={impression} onValueChange={setImpression} /></Field>
           <Field label="Diet · رژیم غذایی *"><select disabled={!canApprove} className="control" value={diet} onChange={(event) => setDiet(event.target.value)}><option value="">انتخاب کنید</option>{dietOptions.map((option) => <option key={option}>{option}</option>)}</select></Field>
-          <Field label="Activity · فعالیت *"><Textarea disabled={!canApprove} value={activity} onChange={(event) => setActivity(event.target.value)} /></Field>
+          <Field label="Activity · فعالیت *"><DictationTextarea disabled={!canApprove} value={activity} onValueChange={setActivity} /></Field>
         </div>}
-        <div><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">آیتم‌های دستور</h3><Button disabled={!canApprove} size="sm" variant="outline" onClick={() => setItems((current) => [...current, ''])}><Plus /> افزودن آیتم</Button></div><div className="space-y-2">{items.map((item, index) => <div key={index} className="flex gap-2"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-sm font-bold">{(index + 1).toLocaleString('fa-IR')}</span><Input disabled={!canApprove} className="h-9" value={item} onChange={(event) => setItems((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="متن استاندارد دستور" /><Button disabled={!canApprove || items.length === 1} size="icon-lg" variant="ghost" onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></Button></div>)}</div></div>
+        <div><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">آیتم‌های دستور</h3><Button disabled={!canApprove} size="sm" variant="outline" onClick={() => setItems((current) => [...current, ''])}><Plus /> افزودن آیتم</Button></div><div className="space-y-2">{items.map((item, index) => <div key={index} className="flex gap-2"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-sm font-bold">{(index + 1).toLocaleString('fa-IR')}</span><DictationInput disabled={!canApprove} className="h-9" value={item} onValueChange={(text) => setItems((current) => current.map((value, itemIndex) => itemIndex === index ? text : value))} placeholder="متن استاندارد دستور" /><Button disabled={!canApprove || items.length === 1} size="icon-lg" variant="ghost" onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></Button></div>)}</div></div>
         {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {!canApprove && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">تنها پزشک می‌تواند دستورات را ثبت و تأیید کند.</p>}
         <div className="flex justify-end"><Button disabled={!canApprove || saving} onClick={() => void approve()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />} تأیید و ثبت دستورات</Button></div>

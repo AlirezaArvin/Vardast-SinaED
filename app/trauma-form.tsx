@@ -7,7 +7,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
   airwayAssessmentOptions,
   airwayInterventionOptions,
@@ -22,6 +21,7 @@ import {
 } from '@/lib/clinical-types';
 import type { TraumaForm, VoiceResult } from '@/lib/clinical-types';
 
+import { DictationInput, DictationTextarea } from './dictation-field';
 import { PdfButton } from './pdf-button';
 import { useVoiceDictation } from './use-voice-dictation';
 import { VoiceBanner } from './voice-banner';
@@ -99,7 +99,7 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
         />
         {form.mechanism.includes('Other') && (
           <Labeled label="Other mechanism" className="mt-4 max-w-xl">
-            <Input dir="auto" disabled={disabled} value={form.mechanismOther} onChange={(event) => set({ mechanismOther: event.target.value })} placeholder="شرح مکانیسم آسیب…" />
+            <DictationInput dir="auto" disabled={disabled} value={form.mechanismOther} onValueChange={(value) => set({ mechanismOther: value })} placeholder="شرح مکانیسم آسیب…" />
           </Labeled>
         )}
       </Section>
@@ -126,7 +126,7 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
                 <Check label="Active External Bleeding" checked={form.activeExternalBleeding} disabled={disabled}
                   onChange={(checked) => set({ activeExternalBleeding: checked, bleedingLocation: checked ? form.bleedingLocation : '' })} />
                 <Labeled label="Location" inline className="min-w-48 flex-1">
-                  <Input dir="auto" disabled={disabled || !form.activeExternalBleeding} value={form.bleedingLocation} onChange={(event) => set({ bleedingLocation: event.target.value })} />
+                  <DictationInput dir="auto" disabled={disabled || !form.activeExternalBleeding} value={form.bleedingLocation} onValueChange={(value) => set({ bleedingLocation: value })} />
                 </Labeled>
               </div>
               <div>
@@ -143,7 +143,7 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
                 <NumberField label="CR" {...text('capillaryRefill')} disabled={disabled} />
               </div>
               <Labeled label="EFAST">
-                <Textarea dir="auto" disabled={disabled} className="min-h-24" value={form.efast} onChange={(event) => set({ efast: event.target.value })} />
+                <DictationTextarea dir="auto" disabled={disabled} className="min-h-24" value={form.efast} onValueChange={(value) => set({ efast: value })} />
               </Labeled>
             </div>}
             interventions={<>
@@ -168,13 +168,13 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
                   <NumberField label="E (1–4)" min={1} max={4} {...text('gcsEye')} disabled={disabled} />
                 </div>
               </div>
-              <Labeled label="Pupil"><Input dir="auto" disabled={disabled} value={form.pupil} onChange={(event) => set({ pupil: event.target.value })} /></Labeled>
-              <Labeled label="Sensory Motor Level"><Input dir="auto" disabled={disabled} value={form.sensoryMotorLevel} onChange={(event) => set({ sensoryMotorLevel: event.target.value })} /></Labeled>
+              <Labeled label="Pupil"><DictationInput dir="auto" disabled={disabled} value={form.pupil} onValueChange={(value) => set({ pupil: value })} /></Labeled>
+              <Labeled label="Sensory Motor Level"><DictationInput dir="auto" disabled={disabled} value={form.sensoryMotorLevel} onValueChange={(value) => set({ sensoryMotorLevel: value })} /></Labeled>
             </div>}
             interventions={<Check label="Intubation" checked={form.disabilityIntubation} onChange={(disabilityIntubation) => set({ disabilityIntubation })} disabled={disabled} />}
           />
           <SurveyRow letter="E" name="Exposure"
-            assessments={<Labeled label="Expose & Log roll"><Textarea dir="auto" disabled={disabled} value={form.exposeLogRoll} onChange={(event) => set({ exposeLogRoll: event.target.value })} /></Labeled>}
+            assessments={<Labeled label="Expose & Log roll"><DictationTextarea dir="auto" disabled={disabled} value={form.exposeLogRoll} onValueChange={(value) => set({ exposeLogRoll: value })} /></Labeled>}
             interventions={<Check label="Prevention of Hypothermia" checked={form.hypothermiaPrevention} onChange={(hypothermiaPrevention) => set({ hypothermiaPrevention })} disabled={disabled} />}
           />
         </div>
@@ -183,7 +183,7 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
       <Section title="AMPLE" subtitle="شرح حال تکمیلی">
         <div className="grid gap-4 sm:grid-cols-2">
           {ampleFields.map(([key, label]) => (
-            <Labeled key={key} label={label}><Textarea dir="auto" disabled={disabled} value={form[key]} onChange={(event) => set({ [key]: event.target.value })} /></Labeled>
+            <Labeled key={key} label={label}><DictationTextarea dir="auto" disabled={disabled} value={form[key]} onValueChange={(value) => set({ [key]: value })} /></Labeled>
           ))}
         </div>
       </Section>
@@ -191,7 +191,7 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
       <Section title="Subject Findings" subtitle="یافته‌های معاینه">
         <div className="grid gap-4 sm:grid-cols-2">
           {findingFields.map(([key, label]) => (
-            <Labeled key={key} label={label}><Textarea dir="auto" disabled={disabled} value={form[key]} onChange={(event) => set({ [key]: event.target.value })} /></Labeled>
+            <Labeled key={key} label={label}><DictationTextarea dir="auto" disabled={disabled} value={form[key]} onValueChange={(value) => set({ [key]: value })} /></Labeled>
           ))}
         </div>
       </Section>

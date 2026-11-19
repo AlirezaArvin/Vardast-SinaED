@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   try {
     const params = new URL(request.url).searchParams;
     const mode = params.get('mode');
-    if (mode !== 'history' && mode !== 'orders' && mode !== 'trauma') return fail('نوع درخواست صوتی نامعتبر است.', 400);
+    if (mode !== 'history' && mode !== 'orders' && mode !== 'trauma' && mode !== 'text') return fail('نوع درخواست صوتی نامعتبر است.', 400);
 
     const contentType = request.headers.get('content-type') ?? '';
     const format = audioFormats[contentType.split(';')[0].trim().toLowerCase()];
@@ -45,8 +45,10 @@ export async function POST(request: Request) {
     if (audio.byteLength === 0) return fail('فایل صوتی دریافت نشد.', 400);
     if (audio.byteLength > MAX_AUDIO_BYTES) return fail('فایل صوتی بیش از حد طولانی است.', 413);
 
-    const transcript = await transcribe(audio, format, mode === 'trauma' ? traumaKeyterms : medicalKeyterms);
+    // A single field can sit on any form, so it gets the trauma terms, which include the general ones.
+    const transcript = await transcribe(audio, format, mode === 'trauma' || mode === 'text' ? traumaKeyterms : medicalKeyterms);
     if (!transcript) return fail('گفتاری در صدای ضبط‌شده تشخیص داده نشد.', 422);
+    if (mode === 'text') return Response.json({ transcript, draft: transcript });
 
     const draft = mode === 'history'
       ? await structureHistory(transcript, await loadPatient(params.get('patientId')))
