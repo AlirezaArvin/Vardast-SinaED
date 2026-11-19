@@ -20,7 +20,22 @@ import {
   internalBleedingSiteOptions,
   mechanismOptions,
 } from '@/lib/clinical-types';
-import type { TraumaForm } from '@/lib/clinical-types';
+import type { TraumaForm, VoiceResult } from '@/lib/clinical-types';
+
+import { useVoiceDictation } from './use-voice-dictation';
+import { VoiceBanner } from './voice-banner';
+
+// Dictation only adds to the form: ticked boxes stay ticked, and fields the physician did not mention keep their value.
+function mergeDictatedTrauma(current: TraumaForm, dictated: TraumaForm): TraumaForm {
+  const merged: Record<string, unknown> = { ...current };
+  for (const [key, value] of Object.entries(dictated)) {
+    const existing = merged[key];
+    if (Array.isArray(value) && Array.isArray(existing)) merged[key] = [...existing, ...value.filter((item) => !existing.includes(item))];
+    else if (typeof value === 'boolean') merged[key] = existing === true || value;
+    else if (typeof value === 'string' && value.trim()) merged[key] = value;
+  }
+  return merged as TraumaForm;
+}
 
 type TraumaTextField = (typeof ampleFields)[number][0] | (typeof findingFields)[number][0];
 const textFields = Object.fromEntries([...ampleFields, ...findingFields].map(([key]) => [key, ''])) as Record<TraumaTextField, string>;
@@ -39,9 +54,14 @@ export const emptyTraumaForm: TraumaForm = {
 type ListKey = { [K in keyof TraumaForm]: TraumaForm[K] extends string[] ? K : never }[keyof TraumaForm];
 type TextKey = { [K in keyof TraumaForm]: TraumaForm[K] extends string ? K : never }[keyof TraumaForm];
 
-export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: TraumaForm | null; canEdit: boolean; onSave: (form: TraumaForm) => Promise<void> }) {
+export function TraumaFormEditor({ initial, patientId, canEdit, onSave }: { initial: TraumaForm | null; patientId: string; canEdit: boolean; onSave: (form: TraumaForm) => Promise<void> }) {
   const [form, setForm] = useState<TraumaForm>({ ...emptyTraumaForm, ...initial });
   const [saving, setSaving] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const voice = useVoiceDictation<TraumaForm>('trauma', ({ transcript: spoken, draft }: VoiceResult<TraumaForm>) => {
+    setForm((current) => mergeDictatedTrauma(current, draft));
+    setTranscript(spoken);
+  }, patientId);
   const disabled = !canEdit;
 
   const set = (patch: Partial<TraumaForm>) => setForm((current) => ({ ...current, ...patch }));
@@ -57,6 +77,7 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
 
   return (
     <div className="latin-digits space-y-5">
+      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={disabled} title="ثبت صوتی فرم تروما" subtitle="یافته‌ها پس از پردازش در فرم زیر علامت‌گذاری و تکمیل می‌شوند. پیش از ذخیره، همه موارد را بازبینی کنید." startLabel="ضبط صوتی فرم تروما" />
       <Section title="At the Time of Arrival" subtitle="وضعیت بیمار در زمان ورود">
         <CheckGroup options={arrivalOptions} {...list('arrival')} disabled={disabled} />
       </Section>
@@ -70,7 +91,7 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
         />
         {form.mechanism.includes('Other') && (
           <Labeled label="Other mechanism" className="mt-4 max-w-xl">
-            <Input disabled={disabled} value={form.mechanismOther} onChange={(event) => set({ mechanismOther: event.target.value })} placeholder="Describe the mechanism…" />
+            <Input dir="auto" disabled={disabled} value={form.mechanismOther} onChange={(event) => set({ mechanismOther: event.target.value })} placeholder="شرح مکانیسم آسیب…" />
           </Labeled>
         )}
       </Section>
@@ -97,7 +118,7 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
                 <Check label="Active External Bleeding" checked={form.activeExternalBleeding} disabled={disabled}
                   onChange={(checked) => set({ activeExternalBleeding: checked, bleedingLocation: checked ? form.bleedingLocation : '' })} />
                 <Labeled label="Location" inline className="min-w-48 flex-1">
-                  <Input disabled={disabled || !form.activeExternalBleeding} value={form.bleedingLocation} onChange={(event) => set({ bleedingLocation: event.target.value })} />
+                  <Input dir="auto" disabled={disabled || !form.activeExternalBleeding} value={form.bleedingLocation} onChange={(event) => set({ bleedingLocation: event.target.value })} />
                 </Labeled>
               </div>
               <div>
@@ -114,7 +135,7 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
                 <NumberField label="CR" {...text('capillaryRefill')} disabled={disabled} />
               </div>
               <Labeled label="EFAST">
-                <Textarea disabled={disabled} className="min-h-24" value={form.efast} onChange={(event) => set({ efast: event.target.value })} />
+                <Textarea dir="auto" disabled={disabled} className="min-h-24" value={form.efast} onChange={(event) => set({ efast: event.target.value })} />
               </Labeled>
             </div>}
             interventions={<>
@@ -139,13 +160,13 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
                   <NumberField label="E (1–4)" min={1} max={4} {...text('gcsEye')} disabled={disabled} />
                 </div>
               </div>
-              <Labeled label="Pupil"><Input disabled={disabled} value={form.pupil} onChange={(event) => set({ pupil: event.target.value })} /></Labeled>
-              <Labeled label="Sensory Motor Level"><Input disabled={disabled} value={form.sensoryMotorLevel} onChange={(event) => set({ sensoryMotorLevel: event.target.value })} /></Labeled>
+              <Labeled label="Pupil"><Input dir="auto" disabled={disabled} value={form.pupil} onChange={(event) => set({ pupil: event.target.value })} /></Labeled>
+              <Labeled label="Sensory Motor Level"><Input dir="auto" disabled={disabled} value={form.sensoryMotorLevel} onChange={(event) => set({ sensoryMotorLevel: event.target.value })} /></Labeled>
             </div>}
             interventions={<Check label="Intubation" checked={form.disabilityIntubation} onChange={(disabilityIntubation) => set({ disabilityIntubation })} disabled={disabled} />}
           />
           <SurveyRow letter="E" name="Exposure"
-            assessments={<Labeled label="Expose & Log roll"><Textarea disabled={disabled} value={form.exposeLogRoll} onChange={(event) => set({ exposeLogRoll: event.target.value })} /></Labeled>}
+            assessments={<Labeled label="Expose & Log roll"><Textarea dir="auto" disabled={disabled} value={form.exposeLogRoll} onChange={(event) => set({ exposeLogRoll: event.target.value })} /></Labeled>}
             interventions={<Check label="Prevention of Hypothermia" checked={form.hypothermiaPrevention} onChange={(hypothermiaPrevention) => set({ hypothermiaPrevention })} disabled={disabled} />}
           />
         </div>
@@ -154,7 +175,7 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
       <Section title="AMPLE" subtitle="شرح حال تکمیلی">
         <div className="grid gap-4 sm:grid-cols-2">
           {ampleFields.map(([key, label]) => (
-            <Labeled key={key} label={label}><Textarea disabled={disabled} value={form[key]} onChange={(event) => set({ [key]: event.target.value })} /></Labeled>
+            <Labeled key={key} label={label}><Textarea dir="auto" disabled={disabled} value={form[key]} onChange={(event) => set({ [key]: event.target.value })} /></Labeled>
           ))}
         </div>
       </Section>
@@ -162,7 +183,7 @@ export function TraumaFormEditor({ initial, canEdit, onSave }: { initial: Trauma
       <Section title="Subject Findings" subtitle="یافته‌های معاینه">
         <div className="grid gap-4 sm:grid-cols-2">
           {findingFields.map(([key, label]) => (
-            <Labeled key={key} label={label}><Textarea disabled={disabled} value={form[key]} onChange={(event) => set({ [key]: event.target.value })} /></Labeled>
+            <Labeled key={key} label={label}><Textarea dir="auto" disabled={disabled} value={form[key]} onChange={(event) => set({ [key]: event.target.value })} /></Labeled>
           ))}
         </div>
       </Section>

@@ -49,7 +49,7 @@ export type OrderBatch = {
 export const consciousnessOptions = ['هوشیار', 'لتارژی', 'ابتوندیشن', 'استوپور', 'کما', 'گیجی و منگی', 'بی‌قراری'] as const;
 export const dietOptions = ['NPO', 'PO Regular', 'Type 1 Diet', 'Type 2 Diet'] as const;
 
-export type VoiceMode = 'history' | 'orders';
+export type VoiceMode = 'history' | 'orders' | 'trauma';
 export type OrdersDraft = { impression: string; diet: string; activity: string; items: string[] };
 export type VoiceResult<T> = { transcript: string; draft: T };
 

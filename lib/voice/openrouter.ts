@@ -3,6 +3,8 @@ import { env } from 'cloudflare:workers';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1';
 export const STT_MODEL = 'elevenlabs/scribe-v2';
 export const LLM_MODEL = 'openai/gpt-5.4-nano';
+// The trauma form maps one dictation onto ~50 fields; nano dropped findings and misread spoken numbers there.
+export const TRAUMA_LLM_MODEL = 'openai/gpt-5.4-mini';
 
 export class VoiceError extends Error {
   constructor(message: string, readonly status = 502) {
@@ -51,9 +53,9 @@ export async function transcribe(audio: ArrayBuffer, format: string, keyterms: s
 
 type ChatCompletion = { choices?: { message?: { content?: string | null; refusal?: string | null } }[] };
 
-export async function completeJson(system: string, user: string, name: string, schema: object, effort: 'low' | 'medium' = 'low'): Promise<unknown> {
+export async function completeJson(system: string, user: string, name: string, schema: object, effort: 'low' | 'medium' = 'low', model = LLM_MODEL): Promise<unknown> {
   const result = await post<ChatCompletion>('/chat/completions', {
-    model: LLM_MODEL,
+    model,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },

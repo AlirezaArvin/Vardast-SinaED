@@ -1,7 +1,20 @@
-import { consciousnessOptions, dietOptions } from '@/lib/clinical-types';
-import type { HistoryDraft, OrdersDraft } from '@/lib/clinical-types';
+import {
+  airwayAssessmentOptions,
+  airwayInterventionOptions,
+  ampleFields,
+  arrivalOptions,
+  breathingAssessmentOptions,
+  breathingInterventionOptions,
+  circulationInterventionOptions,
+  consciousnessOptions,
+  dietOptions,
+  findingFields,
+  internalBleedingSiteOptions,
+  mechanismOptions,
+} from '@/lib/clinical-types';
+import type { HistoryDraft, OrdersDraft, TraumaForm } from '@/lib/clinical-types';
 
-import { completeJson } from './openrouter';
+import { completeJson, TRAUMA_LLM_MODEL } from './openrouter';
 
 export type PatientContext = { sex: 'زن' | 'مرد'; age: number | null };
 
@@ -11,13 +24,20 @@ export const medicalKeyterms = [
   'ECG', 'CXR', 'CT', 'MRI', 'SpO2', 'GCS', 'BP', 'PR', 'RR', 'BS', 'U/A', 'Impression',
 ];
 
-const transcriptContext = `The user message is an automatic speech-recognition transcript of an Iranian physician dictating in Persian on a hospital ward.
+export const traumaKeyterms = [
+  ...medicalKeyterms, 'EFAST', 'FAST', 'ETT', 'MVC', 'GSW', 'PTX', 'HTX', 'Flail Chest', 'Tension', 'C-Collar',
+  'Backboard', 'Log roll', 'Chest Tube', 'Packed Cell', 'MTP', 'Foley', 'PXR', 'AMPLE', 'Morison', 'Apnea', 'Gasping',
+];
+
+const transcriptRules = `The user message is an automatic speech-recognition transcript of an Iranian physician dictating in Persian on a hospital ward.
 The transcript may have little or no punctuation, recognition errors, numbers spoken as words, and English medical terms written in Persian script (for example "سی بی سی" means CBC).
 
 Rules:
 - Extract only what the physician actually said. Never invent, infer, or add clinical content.
 - If something was not mentioned, return an empty string (or an empty array) for it.
-- Fix obvious recognition errors only when the intended medical term is unambiguous.
+- Fix obvious recognition errors only when the intended medical term is unambiguous.`;
+
+const transcriptContext = `${transcriptRules}
 - Write free text in concise, professional Persian. Keep drug names, lab tests and standard abbreviations in Latin script (e.g. Losartan, CBC).`;
 
 const historySystem = `${transcriptContext}
@@ -179,4 +199,85 @@ export async function structureOrders(transcript: string): Promise<OrdersDraft> 
   const raw = (await completeJson(ordersSystem, transcript, 'physician_orders', ordersSchema)) as Record<string, unknown>;
   const items = Array.isArray(raw.items) ? raw.items.map(text).filter(Boolean).slice(0, 50) : [];
   return { impression: text(raw.impression), diet: oneOf(raw.diet, dietOptions), activity: text(raw.activity), items };
+}
+
+const traumaSystem = `${transcriptRules}
+- Write every free-text value in concise, professional written Persian, as the physician would chart it (e.g. «لاسراسیون 3 سانتی‌متری در ناحیه اکسیپیتال، بدون خونریزی فعال»). Keep standard abbreviations and drug names in Latin script (e.g. EFAST, PTX, GCS, Morison) and write numbers with Latin digits.
+
+Fill the multiple trauma form. Tick an option only if the physician said it or used a clear Persian equivalent; never infer one option from another (an MVC does not imply Blunt).
+- arrival: what the patient arrived with or received before reaching the ED. AM or PM is the arrival time (صبح/قبل از ظهر → AM, بعد از ظهر/عصر/شب → PM). Airway is a prehospital airway device in general, Oral an oral airway, ETT an endotracheal tube (لوله تراشه، اینتوبه آمده). تخته پشتی → Backboard, کولار گردنی → Cervical Collar, آتل → Splinting, رگ/آنژیوکت → IV Line, اکسیژن → O2, دارو → Medication, احیا → CPR.
+- mechanism: تصادف → MVC; عابر پیاده → Pedestrian; سرنشین → Passenger; راننده (including راننده موتور) → Driver; خودرو/ماشین → Car; موتور/موتورسیکلت → Motor; دوچرخه → Bicycle; سقوط/زمین خوردن → Fall; سقوط از ارتفاع → Fall and Height; نزاع/ضرب و جرح → Assault; بلانت/غیرنافذ → Blunt; نافذ → Penetrating; چاقو/ضربه چاقو → Stab; گلوله/اسلحه گرم → GSW; SGW only if the physician says SGW. A mechanism not in the list (e.g. سوختگی، گاز گرفتگی) goes in mechanismOther, in Persian.
+- Some options appear in more than one list. Put each item where the physician placed it: a finding in an Assessments list, a procedure done in the ED in an intervention list, and something the patient arrived with from the prehospital team in arrival.
+  Gasping and Apnea: tick them under airwayAssessment, breathingAssessment, or both, matching what was described; if unclear, tick both.
+  Intubation done to secure the airway goes in airwayIntervention; set disabilityIntubation only when the intubation is linked to a low GCS or decreased consciousness.
+- Breathing: any comment on breath sounds (صدای تنفس، کاهش صدای ریه) → Breathing Sound, and also describe it in the chest finding. پنوموتوراکس فشارنده → Tension PTX, هموتوراکس ماسیو → Massive HTX, قفسه سینه مواج → Flail Chest, تنفس نرمال/طبیعی → Normal. Needle Tracheostomy is needle decompression of the chest.
+- Circulation: set activeExternalBleeding and bleedingLocation (in Persian) if active external bleeding is described; set internalBleeding and its sites (Chest, Abdomen, Pelvis, Long Bones Deformity) if internal bleeding is described; a deformity of a long bone (femur, tibia, humerus, ساق، ران، بازو، دفورمیتی) always sets internalBleeding and Long Bones Deformity. پک سل/پکد سل → Packed Cell, with the number of units in packedCellUnits if said. CR is the capillary refill time in seconds. efast: the EFAST/FAST result in Persian.
+- Numeric fields (o2Sat, respiratoryRate, systolic, diastolic, pulse, capillaryRefill, packedCellUnits, gcs*) contain Latin digits only, no units. Convert spoken numbers word by word and exactly: «نود و یک» is 91, «صد و بیست» is 120, «صد و ده» is 110, «هشتاد و پنج» is 85. Take each value from the words right after its label (نبض/پی آر → pulse, ساچوریشن/اشباع → o2Sat, تنفس/آر آر → respiratoryRate). Split blood pressure "120 روی 80" into systolic 120 and diastolic 80.
+- GCS components: fill them only if stated individually, or if the total is 15 (V5 M6 E4) or 3 (all 1). Otherwise leave them empty.
+- exposeLogRoll: only findings the physician explicitly reported on exposure or log roll (اکسپوز، لاگ رول، پشت بیمار); otherwise empty. hypothermiaPrevention: true only if warming or hypothermia prevention was mentioned.
+- AMPLE: allergy, medication (the patient's current drugs), pmhPregnancy (past medical history and pregnancy status), lastMeal, environmentEvent (the circumstances of the injury).
+- Subject findings: the secondary-survey examination by body region. Use each region field only for that region; neurologicExam is the neurological examination, vascular is the pulses and perfusion of the limbs.
+  Region fields hold examination findings only: never repeat an intervention or device (chest tube, collar, pelvic wrapping), a vital sign, or the GCS, since those have their own fields. Leave a region empty if no finding was reported for it.`;
+
+const traumaFieldDescriptions: Record<string, string> = {
+  mechanismOther: 'Mechanism not in the list, in Persian',
+  o2Sat: 'O2 saturation percent, digits only',
+  respiratoryRate: 'Respiratory rate per minute, digits only',
+  bleedingLocation: 'Location of active external bleeding, in Persian',
+  systolic: 'Systolic blood pressure, digits only',
+  diastolic: 'Diastolic blood pressure, digits only',
+  pulse: 'Pulse rate per minute, digits only',
+  capillaryRefill: 'Capillary refill time in seconds, digits only',
+  efast: 'EFAST result, in Persian',
+  packedCellUnits: 'Number of packed cell units, digits only',
+  gcsVerbal: 'GCS verbal 1-5, digits only',
+  gcsMotor: 'GCS motor 1-6, digits only',
+  gcsEye: 'GCS eye 1-4, digits only',
+  pupil: 'Pupil findings, in Persian',
+  sensoryMotorLevel: 'Sensory and motor level, in Persian',
+  exposeLogRoll: 'Expose & log roll findings, in Persian',
+  ...Object.fromEntries([...ampleFields, ...findingFields].map(([key, label]) => [key, `${label}, in Persian`])),
+};
+
+const traumaLists = {
+  arrival: arrivalOptions,
+  mechanism: mechanismOptions,
+  airwayAssessment: airwayAssessmentOptions,
+  airwayIntervention: airwayInterventionOptions,
+  breathingAssessment: breathingAssessmentOptions,
+  breathingIntervention: breathingInterventionOptions,
+  internalBleedingSites: internalBleedingSiteOptions,
+  circulationIntervention: circulationInterventionOptions,
+} satisfies Partial<Record<keyof TraumaForm, readonly string[]>>;
+
+const traumaFlags = ['activeExternalBleeding', 'internalBleeding', 'disabilityIntubation', 'hypothermiaPrevention'] as const;
+const traumaNumericKeys = new Set(['o2Sat', 'respiratoryRate', 'systolic', 'diastolic', 'pulse', 'capillaryRefill', 'packedCellUnits', 'gcsVerbal', 'gcsMotor', 'gcsEye']);
+const traumaTextKeys = Object.keys(traumaFieldDescriptions);
+
+const traumaSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [...Object.keys(traumaLists), ...traumaFlags, ...traumaTextKeys],
+  properties: {
+    ...Object.fromEntries(Object.entries(traumaLists).map(([key, options]) => [key, { type: 'array', items: { type: 'string', enum: [...options] } }])),
+    ...Object.fromEntries(traumaFlags.map((key) => [key, { type: 'boolean' }])),
+    ...Object.fromEntries(traumaTextKeys.map((key) => [key, { type: 'string', description: traumaFieldDescriptions[key] }])),
+  },
+};
+
+export async function structureTrauma(transcript: string): Promise<TraumaForm> {
+  const raw = (await completeJson(traumaSystem, transcript, 'trauma_form', traumaSchema, 'medium', TRAUMA_LLM_MODEL)) as Record<string, unknown>;
+  const draft = {
+    ...Object.fromEntries(Object.entries(traumaLists).map(([key, options]) => [
+      key, Array.isArray(raw[key]) ? options.filter((option) => (raw[key] as unknown[]).includes(option)) : [],
+    ])),
+    ...Object.fromEntries(traumaFlags.map((key) => [key, raw[key] === true])),
+    ...Object.fromEntries(traumaTextKeys.map((key) => [key, traumaNumericKeys.has(key) ? digits(raw[key]) : text(raw[key])])),
+  } as TraumaForm;
+  // Keep dependent fields consistent with the box that enables them on the form.
+  if (draft.mechanismOther && !draft.mechanism.includes('Other')) draft.mechanism.push('Other');
+  if (draft.bleedingLocation) draft.activeExternalBleeding = true;
+  if (draft.internalBleedingSites.length) draft.internalBleeding = true;
+  if (draft.packedCellUnits && !draft.circulationIntervention.includes('Packed Cell')) draft.circulationIntervention.push('Packed Cell');
+  return draft;
 }

@@ -1,6 +1,6 @@
 import { getDatabase } from '@/db/runtime';
 import { transcribe, VoiceError } from '@/lib/voice/openrouter';
-import { medicalKeyterms, structureHistory, structureOrders, type PatientContext } from '@/lib/voice/structure';
+import { medicalKeyterms, structureHistory, structureOrders, structureTrauma, traumaKeyterms, type PatientContext } from '@/lib/voice/structure';
 
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   try {
     const params = new URL(request.url).searchParams;
     const mode = params.get('mode');
-    if (mode !== 'history' && mode !== 'orders') return fail('نوع درخواست صوتی نامعتبر است.', 400);
+    if (mode !== 'history' && mode !== 'orders' && mode !== 'trauma') return fail('نوع درخواست صوتی نامعتبر است.', 400);
 
     const contentType = request.headers.get('content-type') ?? '';
     const format = audioFormats[contentType.split(';')[0].trim().toLowerCase()];
@@ -45,10 +45,12 @@ export async function POST(request: Request) {
     if (audio.byteLength === 0) return fail('فایل صوتی دریافت نشد.', 400);
     if (audio.byteLength > MAX_AUDIO_BYTES) return fail('فایل صوتی بیش از حد طولانی است.', 413);
 
-    const transcript = await transcribe(audio, format, medicalKeyterms);
+    const transcript = await transcribe(audio, format, mode === 'trauma' ? traumaKeyterms : medicalKeyterms);
     if (!transcript) return fail('گفتاری در صدای ضبط‌شده تشخیص داده نشد.', 422);
 
-    const draft = mode === 'history' ? await structureHistory(transcript, await loadPatient(params.get('patientId'))) : await structureOrders(transcript);
+    const draft = mode === 'history'
+      ? await structureHistory(transcript, await loadPatient(params.get('patientId')))
+      : mode === 'trauma' ? await structureTrauma(transcript) : await structureOrders(transcript);
     return Response.json({ transcript, draft });
   } catch (error) {
     if (error instanceof VoiceError) return fail(error.message, error.status);
