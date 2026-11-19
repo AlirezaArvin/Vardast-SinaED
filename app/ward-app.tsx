@@ -31,7 +31,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { consciousnessOptions, dietOptions } from '@/lib/clinical-types';
 import type { HistoryDraft, OrderBatch, OrdersDraft, Patient, TraumaForm, VoiceResult } from '@/lib/clinical-types';
 
-import { TraumaFormEditor } from './trauma-form';
+import { PdfButton } from './pdf-button';
+import { exportHistoryPdf, exportOrdersPdf, exportTraumaPdf } from './pdf-export';
+import { emptyTraumaForm, TraumaFormEditor } from './trauma-form';
 import { useVoiceDictation } from './use-voice-dictation';
 import { VoiceBanner } from './voice-banner';
 
@@ -312,6 +314,10 @@ function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, can
   const canEdit = role !== 'مدیر سیستم';
   const pending = data.orderBatches.flatMap((batch) => batch.items).filter((item) => !item.isDone).length;
 
+  async function exportPdf(build: () => Promise<void>) {
+    try { await build(); } catch { notify('ساخت فایل PDF انجام نشد.'); }
+  }
+
   async function addTraumaForm() {
     if (!window.confirm(`فرم شرح حال تروما به پرونده ${patient.firstName} ${patient.lastName} اضافه شود؟`)) return;
     setAddingTrauma(true);
@@ -353,9 +359,9 @@ function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, can
       </div>
 
       {tab === 'summary' && <Summary data={data} onHistory={() => setTab('history')} onTrauma={() => setTab('trauma')} onOrders={() => setTab('orders')} />}
-      {tab === 'history' && <HistoryEditor initial={data.history} patientId={patient.id} actor={actor} canEdit={canEdit} onSaved={async () => { notify('شرح حال ذخیره شد.'); await onRefresh(); }} />}
-      {tab === 'trauma' && patient.isTrauma && <TraumaFormEditor initial={data.traumaForm} patientId={patient.id} canEdit={canEdit} onSave={async (traumaForm) => { await api({ action: 'saveTraumaForm', patientId: patient.id, traumaForm, actor }); notify('فرم تروما ذخیره شد.'); await onRefresh(); }} />}
-      {tab === 'orders' && <OrdersPanel patientId={patient.id} batches={data.orderBatches} actor={actor} canApprove={role === 'پزشک'} onChanged={async () => { await onRefresh(); }} notify={notify} />}
+      {tab === 'history' && <HistoryEditor initial={data.history} patientId={patient.id} actor={actor} canEdit={canEdit} onSaved={async () => { notify('شرح حال ذخیره شد.'); await onRefresh(); }} onExportPdf={() => void exportPdf(() => exportHistoryPdf(patient, { ...emptyHistory, ...data.history }, roleNames['پزشک']))} />}
+      {tab === 'trauma' && patient.isTrauma && <TraumaFormEditor initial={data.traumaForm} patientId={patient.id} canEdit={canEdit} onSave={async (traumaForm) => { await api({ action: 'saveTraumaForm', patientId: patient.id, traumaForm, actor }); notify('فرم تروما ذخیره شد.'); await onRefresh(); }} onExportPdf={() => void exportPdf(() => exportTraumaPdf(patient, { ...emptyTraumaForm, ...data.traumaForm }, roleNames['پزشک']))} />}
+      {tab === 'orders' && <OrdersPanel patientId={patient.id} batches={data.orderBatches} actor={actor} canApprove={role === 'پزشک'} onChanged={async () => { await onRefresh(); }} notify={notify} onExportPdf={() => void exportPdf(() => exportOrdersPdf(patient, data.orderBatches, roleNames['پزشک']))} />}
     </div>
   );
 }
@@ -373,7 +379,7 @@ function Summary({ data, onHistory, onTrauma, onOrders }: { data: ProfileData; o
   );
 }
 
-function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initial: HistoryDraft | null; patientId: string; actor: string; canEdit: boolean; onSaved: () => Promise<void> }) {
+function HistoryEditor({ initial, patientId, actor, canEdit, onSaved, onExportPdf }: { initial: HistoryDraft | null; patientId: string; actor: string; canEdit: boolean; onSaved: () => Promise<void>; onExportPdf: () => void }) {
   const [draft, setDraft] = useState<HistoryDraft>({ ...emptyHistory, ...initial });
   const [saving, setSaving] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -387,6 +393,13 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initia
   async function save() {
     setSaving(true);
     try { await api({ action: 'saveHistory', patientId, history: draft, actor }); await onSaved(); } finally { setSaving(false); }
+  }
+
+  // The PDF is the saved record; unsaved edits in the draft are not part of it.
+  function exportPdf() {
+    const unsaved = JSON.stringify(draft) !== JSON.stringify({ ...emptyHistory, ...initial });
+    if (unsaved && !window.confirm('تغییرات ذخیره‌نشده در فایل PDF نمی‌آیند و خروجی از آخرین نسخه ذخیره‌شده ساخته می‌شود. ادامه می‌دهید؟')) return;
+    onExportPdf();
   }
 
   return (
@@ -420,13 +433,13 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved }: { initia
         </div>
         <Field label="معاینه فیزیکی (Physical Exam)" className="sm:col-span-2"><Textarea disabled={!canEdit} className="min-h-28" value={draft.physicalExam} onChange={(event) => update('physicalExam', event.target.value)} /></Field>
         <div className="sm:col-span-2 rounded-xl border border-slate-200 p-4"><h3 className="mb-4 font-bold">نتایج پاراکلینیک (Para-clinical Results)</h3><Textarea disabled={!canEdit} aria-label="نتایج پاراکلینیک" className="min-h-28" placeholder="نتایج آزمایش‌ها، تصویربرداری، نوار قلب و…" value={draft.paraclinicalResults} onChange={(event) => update('paraclinicalResults', event.target.value)} /></div>
-        <div className="sm:col-span-2 flex justify-end"><Button disabled={!canEdit || saving} onClick={() => void save()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <Save />} ذخیره شرح حال</Button></div>
+        <div className="sm:col-span-2 flex justify-end gap-2"><PdfButton disabled={!initial} disabledHint="ابتدا شرح حال را ذخیره کنید." onClick={exportPdf} /><Button disabled={!canEdit || saving} onClick={() => void save()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <Save />} ذخیره شرح حال</Button></div>
       </CardContent></Card>
     </div>
   );
 }
 
-function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify }: { patientId: string; batches: OrderBatch[]; actor: string; canApprove: boolean; onChanged: () => Promise<void>; notify: (message: string) => void }) {
+function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify, onExportPdf }: { patientId: string; batches: OrderBatch[]; actor: string; canApprove: boolean; onChanged: () => Promise<void>; notify: (message: string) => void; onExportPdf: () => void }) {
   const isInitial = batches.length === 0;
   const [impression, setImpression] = useState('');
   const [diet, setDiet] = useState('');
@@ -482,7 +495,7 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify 
         <div className="flex justify-end"><Button disabled={!canApprove || saving} onClick={() => void approve()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />} تأیید و ثبت دستورات</Button></div>
       </CardContent></Card>
 
-      <div><h2 className="mb-3 text-lg font-black">دستورات ثبت‌شده</h2>{batches.length === 0 ? <Card className="border-0 bg-white py-8 text-center shadow-sm"><CardContent><ClipboardCheck className="mx-auto mb-2 size-8 text-slate-300" /><p className="text-sm text-slate-500">هنوز دستوری ثبت نشده است.</p></CardContent></Card> : <div className="space-y-4">{batches.map((batch) => <Card key={batch.id} className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle className="font-bold">{batch.isInitial ? 'دستور اولیه' : 'دستور تکمیلی'}</CardTitle><span className="text-xs text-slate-400">{faDate(batch.approvedAt)}</span></div>{batch.isInitial && <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><span className="rounded-lg bg-slate-50 p-2"><b>Impression:</b> {batch.impression}</span><span className="rounded-lg bg-slate-50 p-2"><b>Diet:</b> {batch.diet}</span><span className="rounded-lg bg-slate-50 p-2"><b>Activity:</b> {batch.activity}</span></div>}</CardHeader><CardContent className="space-y-2">{batch.items.map((item) => <button key={item.id} onClick={() => void toggle(item.id, !item.isDone)} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-right transition ${item.isDone ? 'border-emerald-200 bg-emerald-50 text-slate-500' : 'border-slate-200 bg-white hover:border-teal-300'}`}><span className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border ${item.isDone ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300'}`}>{item.isDone && <Check className="size-3" />}</span><span className={item.isDone ? 'line-through' : ''}>{item.text}</span><Badge variant="outline" className="mr-auto">{item.isDone ? 'انجام‌شده' : 'انجام‌نشده'}</Badge></button>)}</CardContent></Card>)}</div>}</div>
+      <div><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-black">دستورات ثبت‌شده</h2><PdfButton disabled={batches.length === 0} disabledHint="هنوز دستوری ثبت نشده است." onClick={onExportPdf} /></div>{batches.length === 0 ? <Card className="border-0 bg-white py-8 text-center shadow-sm"><CardContent><ClipboardCheck className="mx-auto mb-2 size-8 text-slate-300" /><p className="text-sm text-slate-500">هنوز دستوری ثبت نشده است.</p></CardContent></Card> : <div className="space-y-4">{batches.map((batch) => <Card key={batch.id} className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle className="font-bold">{batch.isInitial ? 'دستور اولیه' : 'دستور تکمیلی'}</CardTitle><span className="text-xs text-slate-400">{faDate(batch.approvedAt)}</span></div>{batch.isInitial && <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><span className="rounded-lg bg-slate-50 p-2"><b>Impression:</b> {batch.impression}</span><span className="rounded-lg bg-slate-50 p-2"><b>Diet:</b> {batch.diet}</span><span className="rounded-lg bg-slate-50 p-2"><b>Activity:</b> {batch.activity}</span></div>}</CardHeader><CardContent className="space-y-2">{batch.items.map((item) => <button key={item.id} onClick={() => void toggle(item.id, !item.isDone)} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-right transition ${item.isDone ? 'border-emerald-200 bg-emerald-50 text-slate-500' : 'border-slate-200 bg-white hover:border-teal-300'}`}><span className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border ${item.isDone ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300'}`}>{item.isDone && <Check className="size-3" />}</span><span className={item.isDone ? 'line-through' : ''}>{item.text}</span><Badge variant="outline" className="mr-auto">{item.isDone ? 'انجام‌شده' : 'انجام‌نشده'}</Badge></button>)}</CardContent></Card>)}</div>}</div>
     </div>
   );
 }

@@ -22,6 +22,7 @@ import {
 } from '@/lib/clinical-types';
 import type { TraumaForm, VoiceResult } from '@/lib/clinical-types';
 
+import { PdfButton } from './pdf-button';
 import { useVoiceDictation } from './use-voice-dictation';
 import { VoiceBanner } from './voice-banner';
 
@@ -54,7 +55,7 @@ export const emptyTraumaForm: TraumaForm = {
 type ListKey = { [K in keyof TraumaForm]: TraumaForm[K] extends string[] ? K : never }[keyof TraumaForm];
 type TextKey = { [K in keyof TraumaForm]: TraumaForm[K] extends string ? K : never }[keyof TraumaForm];
 
-export function TraumaFormEditor({ initial, patientId, canEdit, onSave }: { initial: TraumaForm | null; patientId: string; canEdit: boolean; onSave: (form: TraumaForm) => Promise<void> }) {
+export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExportPdf }: { initial: TraumaForm | null; patientId: string; canEdit: boolean; onSave: (form: TraumaForm) => Promise<void>; onExportPdf: () => void }) {
   const [form, setForm] = useState<TraumaForm>({ ...emptyTraumaForm, ...initial });
   const [saving, setSaving] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -73,6 +74,13 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave }: { init
   async function save() {
     setSaving(true);
     try { await onSave(form); } finally { setSaving(false); }
+  }
+
+  // The PDF is the saved record; unsaved edits in the form are not part of it.
+  function exportPdf() {
+    const unsaved = JSON.stringify(form) !== JSON.stringify({ ...emptyTraumaForm, ...initial });
+    if (unsaved && !window.confirm('تغییرات ذخیره‌نشده در فایل PDF نمی‌آیند و خروجی از آخرین نسخه ذخیره‌شده ساخته می‌شود. ادامه می‌دهید؟')) return;
+    onExportPdf();
   }
 
   return (
@@ -188,7 +196,8 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave }: { init
         </div>
       </Section>
 
-      <div className="sticky bottom-4 z-10 flex justify-end">
+      <div className="sticky bottom-4 z-10 flex justify-end gap-2">
+        <PdfButton disabled={!initial} disabledHint="ابتدا فرم تروما را ذخیره کنید." onClick={exportPdf} size="lg" className="h-11 px-5 shadow-lg" />
         <Button disabled={disabled || saving} onClick={() => void save()} size="lg" className="h-11 bg-[#0d4f4a] px-5 text-white shadow-lg">
           {saving ? <LoaderCircle className="animate-spin" /> : <Save />} ذخیره فرم تروما
         </Button>
