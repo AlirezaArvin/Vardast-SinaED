@@ -56,15 +56,6 @@ function toLatinDigits(value: string) {
   return value.replace(/[۰-۹]/g, (character) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(character))).replace(/[٠-٩]/g, (character) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(character)));
 }
 
-function isValidNationalId(value: string) {
-  const nationalId = toLatinDigits(value).replace(/\D/g, '');
-  if (!/^\d{10}$/.test(nationalId) || /^(\d)\1{9}$/.test(nationalId)) return false;
-  const sum = nationalId.slice(0, 9).split('').reduce((total, digit, index) => total + Number(digit) * (10 - index), 0);
-  const remainder = sum % 11;
-  const check = remainder < 2 ? remainder : 11 - remainder;
-  return check === Number(nationalId[9]);
-}
-
 function faDate(value: string) {
   try {
     return new Intl.DateTimeFormat('fa-IR-u-ca-persian', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
@@ -264,8 +255,7 @@ function AddPatientDialog({ open, onOpenChange, actor, onSaved }: { open: boolea
     event.preventDefault();
     setError('');
     const values = Object.fromEntries(new FormData(event.currentTarget).entries()) as Record<string, string>;
-    values.nationalId = toLatinDigits(values.nationalId).replace(/\D/g, '');
-    if (!isValidNationalId(values.nationalId)) { setError('کد ملی واردشده معتبر نیست.'); return; }
+    values.nationalId = toLatinDigits(values.nationalId).trim();
     values.age = toLatinDigits(values.age).trim();
     if (!/^\d{1,3}$/.test(values.age) || Number(values.age) > 130) { setError('سن واردشده معتبر نیست.'); return; }
     setSaving(true);
