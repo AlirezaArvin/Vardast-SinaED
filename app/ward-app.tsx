@@ -3,6 +3,7 @@
 import { SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  Ambulance,
   ArrowRight,
   BedDouble,
   Check,
@@ -15,6 +16,7 @@ import {
   Mic,
   MicOff,
   Plus,
+  PlusCircle,
   Save,
   Search,
   Sparkles,
@@ -30,12 +32,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { consciousnessOptions, dietOptions } from '@/lib/clinical-types';
-import type { HistoryDraft, OrderBatch, OrdersDraft, Patient, VoiceResult } from '@/lib/clinical-types';
+import type { HistoryDraft, OrderBatch, OrdersDraft, Patient, TraumaForm, VoiceResult } from '@/lib/clinical-types';
 
+import { TraumaFormEditor } from './trauma-form';
 import { useVoiceDictation, type DictationStatus } from './use-voice-dictation';
 
 type Role = 'پزشک' | 'مسئول پذیرش بخش' | 'مدیر سیستم';
-type ProfileData = { patient: Patient; history: HistoryDraft | null; orderBatches: OrderBatch[] };
+type ProfileData = { patient: Patient; history: HistoryDraft | null; traumaForm: TraumaForm | null; orderBatches: OrderBatch[] };
 
 const emptyHistory: HistoryDraft = {
   chiefComplaint: '', onset: '', history: '', medicalHistory: '', drugHistory: '', allergyHistory: '',
@@ -233,7 +236,10 @@ function PatientCard({ patient, index, onOpen, onDischarge, canDischarge }: { pa
           <span className={`grid size-12 place-items-center rounded-2xl font-bold ${colors[index % colors.length]}`}>{patient.firstName[0]}{patient.lastName[0]}</span>
           <div><CardTitle className="text-base font-bold">{patient.firstName} {patient.lastName}</CardTitle><p className="mt-1 text-xs text-slate-500">کد ملی: <span dir="ltr">{patient.nationalId}</span></p></div>
         </div>
-        <Badge className="bg-emerald-50 text-emerald-700">بستری فعال</Badge>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {patient.isTrauma && <Badge className="bg-red-50 text-red-700">ترومایی</Badge>}
+          <Badge className="bg-emerald-50 text-emerald-700">بستری فعال</Badge>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3 text-sm">
@@ -284,6 +290,10 @@ function AddPatientDialog({ open, onOpenChange, actor, onSaved }: { open: boolea
           <Field label="جنسیت"><select required name="sex" className="control"><option value="زن">زن</option><option value="مرد">مرد</option></select></Field>
           <Field label="شماره اتاق"><Input required name="room" /></Field>
           <Field label="شماره تخت"><Input required name="bed" /></Field>
+          <label className="flex cursor-pointer items-center gap-3 self-end rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700 has-checked:border-red-300 has-checked:bg-red-50 has-checked:text-red-800">
+            <input type="checkbox" name="isTrauma" className="size-4 accent-red-600" />
+            <Ambulance className="size-4" /> بیمار ترومایی
+          </label>
           {error && <p className="sm:col-span-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           <DialogFooter className="sm:col-span-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>انصراف</Button>
@@ -298,20 +308,37 @@ function AddPatientDialog({ open, onOpenChange, actor, onSaved }: { open: boolea
 function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, canDischarge, notify }: {
   data: ProfileData; actor: string; role: Role; onBack: () => void; onRefresh: () => Promise<void>; onDischarge: () => void; canDischarge: boolean; notify: (message: string) => void;
 }) {
-  const [tab, setTab] = useState<'summary' | 'history' | 'orders'>('summary');
+  const [tab, setTab] = useState<'summary' | 'history' | 'trauma' | 'orders'>('summary');
+  const [addingTrauma, setAddingTrauma] = useState(false);
   const patient = data.patient;
+  const canEdit = role !== 'مدیر سیستم';
   const pending = data.orderBatches.flatMap((batch) => batch.items).filter((item) => !item.isDone).length;
+
+  async function addTraumaForm() {
+    if (!window.confirm(`فرم شرح حال تروما به پرونده ${patient.firstName} ${patient.lastName} اضافه شود؟`)) return;
+    setAddingTrauma(true);
+    try {
+      await api({ action: 'markTrauma', patientId: patient.id, actor });
+      await onRefresh();
+      setTab('trauma');
+      notify('فرم تروما به پرونده بیمار اضافه شد.');
+    } finally { setAddingTrauma(false); }
+  }
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
       <div className="mb-4 flex items-center justify-between gap-3">
         <Button onClick={onBack} variant="ghost"><ArrowRight /> بازگشت به بیماران</Button>
-        <Button disabled={!canDischarge} onClick={onDischarge} variant="destructive">ترخیص بیمار</Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {!patient.isTrauma && <Button disabled={!canEdit || addingTrauma} onClick={() => void addTraumaForm()} variant="outline" className="border-red-200 text-red-700 hover:bg-red-50">{addingTrauma ? <LoaderCircle className="animate-spin" /> : <PlusCircle />} اضافه کردن فرم تروما</Button>}
+          <Button disabled={!canDischarge} onClick={onDischarge} variant="destructive">ترخیص بیمار</Button>
+        </div>
       </div>
       <Card className="mb-5 border-0 bg-gradient-to-l from-[#0d4f4a] to-[#14746b] text-white shadow-lg ring-0">
         <CardContent className="grid gap-5 md:grid-cols-[1fr_auto] md:items-center">
           <div className="flex items-center gap-4">
             <span className="grid size-16 place-items-center rounded-2xl bg-white/15 text-xl font-black ring-1 ring-white/20">{patient.firstName[0]}{patient.lastName[0]}</span>
-            <div><h1 className="text-2xl font-black">{patient.firstName} {patient.lastName}</h1><p className="mt-1 text-sm text-teal-100">کد ملی: <span dir="ltr">{patient.nationalId}</span> · {patient.sex}{patient.age != null && ` · ${patient.age} ساله`}</p></div>
+            <div><h1 className="flex flex-wrap items-center gap-2 text-2xl font-black">{patient.firstName} {patient.lastName}{patient.isTrauma && <Badge className="bg-red-500 text-white">ترومایی</Badge>}</h1><p className="mt-1 text-sm text-teal-100">کد ملی: <span dir="ltr">{patient.nationalId}</span> · {patient.sex}{patient.age != null && ` · ${patient.age} ساله`}</p></div>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-xs text-teal-100">محل بستری</p><p className="mt-1 font-bold">اتاق {patient.room} · تخت {patient.bed}</p></div>
@@ -323,21 +350,26 @@ function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, can
       <div className="mb-5 flex gap-2 overflow-x-auto rounded-xl bg-white p-2 shadow-sm ring-1 ring-slate-200/80">
         <TabButton active={tab === 'summary'} onClick={() => setTab('summary')} icon={<Activity />}>خلاصه پرونده</TabButton>
         <TabButton active={tab === 'history'} onClick={() => setTab('history')} icon={<Stethoscope />}>شرح حال</TabButton>
+        {patient.isTrauma && <TabButton active={tab === 'trauma'} onClick={() => setTab('trauma')} icon={<Ambulance />}>فرم تروما</TabButton>}
         <TabButton active={tab === 'orders'} onClick={() => setTab('orders')} icon={<ClipboardCheck />}>دستورات</TabButton>
       </div>
 
-      {tab === 'summary' && <Summary data={data} onHistory={() => setTab('history')} onOrders={() => setTab('orders')} />}
-      {tab === 'history' && <HistoryEditor initial={data.history} patientId={patient.id} actor={actor} canEdit={role !== 'مدیر سیستم'} onSaved={async () => { notify('شرح حال ذخیره شد.'); await onRefresh(); }} />}
+      {tab === 'summary' && <Summary data={data} onHistory={() => setTab('history')} onTrauma={() => setTab('trauma')} onOrders={() => setTab('orders')} />}
+      {tab === 'history' && <HistoryEditor initial={data.history} patientId={patient.id} actor={actor} canEdit={canEdit} onSaved={async () => { notify('شرح حال ذخیره شد.'); await onRefresh(); }} />}
+      {tab === 'trauma' && patient.isTrauma && <TraumaFormEditor initial={data.traumaForm} canEdit={canEdit} onSave={async (traumaForm) => { await api({ action: 'saveTraumaForm', patientId: patient.id, traumaForm, actor }); notify('فرم تروما ذخیره شد.'); await onRefresh(); }} />}
       {tab === 'orders' && <OrdersPanel patientId={patient.id} batches={data.orderBatches} actor={actor} canApprove={role === 'پزشک'} onChanged={async () => { await onRefresh(); }} notify={notify} />}
     </div>
   );
 }
 
-function Summary({ data, onHistory, onOrders }: { data: ProfileData; onHistory: () => void; onOrders: () => void }) {
+function Summary({ data, onHistory, onTrauma, onOrders }: { data: ProfileData; onHistory: () => void; onTrauma: () => void; onOrders: () => void }) {
   const latest = data.orderBatches[0];
+  const trauma = data.traumaForm;
+  const mechanism = trauma?.mechanism.map((item) => item === 'Other' && trauma.mechanismOther ? trauma.mechanismOther : item).join('، ');
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><CardTitle className="flex items-center gap-2 font-bold"><Stethoscope className="text-[#0d6b63]" /> شرح حال پذیرش</CardTitle></CardHeader><CardContent>{data.history ? <><p className="text-xs text-slate-400">علت مراجعه</p><p className="mt-1 line-clamp-3 leading-7">{data.history.chiefComplaint || '—'}</p></> : <p className="text-sm text-slate-500">هنوز شرح حالی ثبت نشده است.</p>}<Button onClick={onHistory} variant="outline" className="mt-4 w-full">مشاهده و ویرایش <ChevronLeft /></Button></CardContent></Card>
+      {data.patient.isTrauma && <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><CardTitle className="flex items-center gap-2 font-bold"><Ambulance className="text-red-600" /> فرم شرح حال تروما</CardTitle></CardHeader><CardContent>{trauma ? <><p className="text-xs text-slate-400">مکانیسم آسیب</p><p dir="auto" className="mt-1 line-clamp-2 leading-7">{mechanism || '—'}</p></> : <p className="text-sm text-slate-500">فرم تروما هنوز تکمیل نشده است.</p>}<Button onClick={onTrauma} variant="outline" className="mt-4 w-full">مشاهده و تکمیل فرم <ChevronLeft /></Button></CardContent></Card>}
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><CardTitle className="flex items-center gap-2 font-bold"><ClipboardCheck className="text-[#d57b36]" /> آخرین دستورات</CardTitle></CardHeader><CardContent>{latest ? <><p className="text-xs text-slate-400">{latest.isInitial ? 'دستور اولیه' : 'دستور تکمیلی'} · {faDate(latest.approvedAt)}</p><p className="mt-2 text-sm">{latest.items.length.toLocaleString('fa-IR')} دستور ثبت‌شده</p></> : <p className="text-sm text-slate-500">هنوز دستوری ثبت نشده است.</p>}<Button onClick={onOrders} variant="outline" className="mt-4 w-full">مشاهده دستورات <ChevronLeft /></Button></CardContent></Card>
     </div>
   );

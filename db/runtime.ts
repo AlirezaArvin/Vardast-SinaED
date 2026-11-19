@@ -5,9 +5,14 @@ const schemaStatements = [
     id TEXT PRIMARY KEY, national_id TEXT NOT NULL UNIQUE, first_name TEXT NOT NULL,
     last_name TEXT NOT NULL, age INTEGER, sex TEXT NOT NULL,
     room TEXT NOT NULL, bed TEXT NOT NULL, admitted_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active', discharged_at TEXT, created_at TEXT NOT NULL
+    status TEXT NOT NULL DEFAULT 'active', discharged_at TEXT,
+    is_trauma INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS histories (
+    id TEXT PRIMARY KEY, patient_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL,
+    created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS trauma_forms (
     id TEXT PRIMARY KEY, patient_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL,
     created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   )`,
@@ -45,6 +50,7 @@ export async function getDatabase() {
   if (!initialized) {
     await env.DB.batch(schemaStatements.map((statement) => env.DB.prepare(statement)));
     await migrateBirthDateToAge();
+    await addTraumaFlag();
     await seedDemoPatients();
     initialized = true;
   }
@@ -55,6 +61,13 @@ async function migrateBirthDateToAge() {
   const columns = await env.DB.prepare('PRAGMA table_info(patients)').all<{ name: string }>();
   if (!columns.results.some((column) => column.name === 'birth_date')) return;
   await env.DB.batch(birthDateToAgeMigration.map((statement) => env.DB.prepare(statement)));
+}
+
+// Same statement as the first one in drizzle/0002_trauma_form.sql.
+async function addTraumaFlag() {
+  const columns = await env.DB.prepare('PRAGMA table_info(patients)').all<{ name: string }>();
+  if (columns.results.some((column) => column.name === 'is_trauma')) return;
+  await env.DB.prepare('ALTER TABLE patients ADD COLUMN is_trauma INTEGER NOT NULL DEFAULT 0').run();
 }
 
 async function seedDemoPatients() {

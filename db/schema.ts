@@ -12,10 +12,20 @@ export const patients = sqliteTable('patients', {
   admittedAt: text('admitted_at').notNull(),
   status: text('status').notNull().default('active'),
   dischargedAt: text('discharged_at'),
+  isTrauma: integer('is_trauma', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
 });
 
 export const histories = sqliteTable('histories', {
+  id: text('id').primaryKey(),
+  patientId: text('patient_id').notNull().unique(),
+  payload: text('payload').notNull(),
+  createdBy: text('created_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const traumaForms = sqliteTable('trauma_forms', {
   id: text('id').primaryKey(),
   patientId: text('patient_id').notNull().unique(),
   payload: text('payload').notNull(),

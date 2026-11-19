@@ -104,6 +104,11 @@ select {
   font: inherit;
 }
 
+/* English clinical forms (e.g. the trauma form) keep Latin digits: O2, GSW, vital signs. */
+.latin-digits {
+  font-family: 'Vazirmatn Variable', Tahoma, Arial, sans-serif;
+}
+
 .control {
   min-height: 2rem;
   width: 100%;

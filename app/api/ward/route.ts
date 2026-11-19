@@ -5,7 +5,9 @@ type RequestBody = Record<string, unknown> & { action?: string; actor?: string }
 const patientSelect = `SELECT
   id, national_id AS nationalId, first_name AS firstName, last_name AS lastName,
   age, sex, room, bed, admitted_at AS admittedAt,
-  status, discharged_at AS dischargedAt FROM patients`;
+  status, discharged_at AS dischargedAt, is_trauma AS isTrauma FROM patients`;
+
+const withTraumaFlag = (patient: Record<string, unknown> | null) => patient && { ...patient, isTrauma: Boolean(patient.isTrauma) };
 
 export async function GET(request: Request) {
   const db = await getDatabase();
@@ -14,8 +16,9 @@ export async function GET(request: Request) {
   const resource = url.searchParams.get('resource') ?? 'patients';
 
   if (resource === 'patient' && patientId) {
-    const patient = await db.prepare(`${patientSelect} WHERE id = ?`).bind(patientId).first();
+    const patient = await db.prepare(`${patientSelect} WHERE id = ?`).bind(patientId).first<Record<string, unknown>>();
     const historyRow = await db.prepare('SELECT payload FROM histories WHERE patient_id = ?').bind(patientId).first<{ payload: string }>();
+    const traumaRow = await db.prepare('SELECT payload FROM trauma_forms WHERE patient_id = ?').bind(patientId).first<{ payload: string }>();
     const batches = await db.prepare(
       `SELECT id, impression, diet, activity, is_initial AS isInitial, approved_at AS approvedAt
        FROM order_batches WHERE patient_id = ? ORDER BY created_at DESC`,
@@ -29,11 +32,16 @@ export async function GET(request: Request) {
       isInitial: Boolean(batch.isInitial),
       items: items.results.filter((item) => item.batchId === batch.id).map((item) => ({ ...item, isDone: Boolean(item.isDone) })),
     }));
-    return Response.json({ patient, history: historyRow ? JSON.parse(historyRow.payload) : null, orderBatches });
+    return Response.json({
+      patient: withTraumaFlag(patient),
+      history: historyRow ? JSON.parse(historyRow.payload) : null,
+      traumaForm: traumaRow ? JSON.parse(traumaRow.payload) : null,
+      orderBatches,
+    });
   }
 
-  const patients = await db.prepare(`${patientSelect} WHERE status = 'active' ORDER BY admitted_at DESC`).all();
-  return Response.json({ patients: patients.results });
+  const patients = await db.prepare(`${patientSelect} WHERE status = 'active' ORDER BY admitted_at DESC`).all<Record<string, unknown>>();
+  return Response.json({ patients: patients.results.map(withTraumaFlag) });
 }
 
 export async function POST(request: Request) {
@@ -49,11 +57,12 @@ export async function POST(request: Request) {
       return Response.json({ error: 'سن واردشده معتبر نیست.' }, { status: 400 });
     }
     const id = crypto.randomUUID();
+    const isTrauma = Boolean(patient.isTrauma);
     await db.prepare(
-      `INSERT INTO patients (id, national_id, first_name, last_name, age, sex, room, bed, admitted_at, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
-    ).bind(id, patient.nationalId, patient.firstName, patient.lastName, age, patient.sex, patient.room, patient.bed, now, now).run();
-    await audit(id, actor, 'patient.created', `تخت ${patient.bed}`);
+      `INSERT INTO patients (id, national_id, first_name, last_name, age, sex, room, bed, admitted_at, status, is_trauma, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    ).bind(id, patient.nationalId, patient.firstName, patient.lastName, age, patient.sex, patient.room, patient.bed, now, isTrauma ? 1 : 0, now).run();
+    await audit(id, actor, 'patient.created', `تخت ${patient.bed}${isTrauma ? ' · ترومایی' : ''}`);
     return Response.json({ ok: true, id });
   }
 
@@ -61,6 +70,24 @@ export async function POST(request: Request) {
     const patientId = String(body.patientId);
     await db.prepare("UPDATE patients SET status = 'discharged', discharged_at = ? WHERE id = ?").bind(now, patientId).run();
     await audit(patientId, actor, 'patient.discharged');
+    return Response.json({ ok: true });
+  }
+
+  if (body.action === 'markTrauma') {
+    const patientId = String(body.patientId);
+    await db.prepare('UPDATE patients SET is_trauma = 1 WHERE id = ?').bind(patientId).run();
+    await audit(patientId, actor, 'patient.traumaFormAdded');
+    return Response.json({ ok: true });
+  }
+
+  if (body.action === 'saveTraumaForm') {
+    const patientId = String(body.patientId);
+    const payload = JSON.stringify(body.traumaForm);
+    await db.prepare(
+      `INSERT INTO trauma_forms (id, patient_id, payload, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(patient_id) DO UPDATE SET payload = excluded.payload, created_by = excluded.created_by, updated_at = excluded.updated_at`,
+    ).bind(crypto.randomUUID(), patientId, payload, actor, now, now).run();
+    await audit(patientId, actor, 'traumaForm.saved');
     return Response.json({ ok: true });
   }
 
