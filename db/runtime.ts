@@ -18,7 +18,7 @@ const schemaStatements = [
   )`,
   `CREATE TABLE IF NOT EXISTS order_batches (
     id TEXT PRIMARY KEY, patient_id TEXT NOT NULL, impression TEXT, diet TEXT,
-    activity TEXT, is_initial INTEGER NOT NULL DEFAULT 0, created_by TEXT NOT NULL,
+    activity TEXT, condition TEXT, is_initial INTEGER NOT NULL DEFAULT 0, created_by TEXT NOT NULL,
     approved_at TEXT NOT NULL, created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS order_items (
@@ -51,6 +51,7 @@ export async function getDatabase() {
     await env.DB.batch(schemaStatements.map((statement) => env.DB.prepare(statement)));
     await migrateBirthDateToAge();
     await addTraumaFlag();
+    await addOrderCondition();
     await seedDemoPatients();
     initialized = true;
   }
@@ -68,6 +69,13 @@ async function addTraumaFlag() {
   const columns = await env.DB.prepare('PRAGMA table_info(patients)').all<{ name: string }>();
   if (columns.results.some((column) => column.name === 'is_trauma')) return;
   await env.DB.prepare('ALTER TABLE patients ADD COLUMN is_trauma INTEGER NOT NULL DEFAULT 0').run();
+}
+
+// Same statement as drizzle/0003_order_condition.sql.
+async function addOrderCondition() {
+  const columns = await env.DB.prepare('PRAGMA table_info(order_batches)').all<{ name: string }>();
+  if (columns.results.some((column) => column.name === 'condition')) return;
+  await env.DB.prepare('ALTER TABLE order_batches ADD COLUMN condition TEXT').run();
 }
 
 async function seedDemoPatients() {

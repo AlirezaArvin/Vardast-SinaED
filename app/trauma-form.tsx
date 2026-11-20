@@ -85,7 +85,7 @@ export function TraumaFormEditor({ initial, patientId, canEdit, onSave, onExport
 
   return (
     <div className="latin-digits space-y-5">
-      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={disabled} title="ثبت صوتی فرم تروما" subtitle="یافته‌ها پس از پردازش در فرم زیر علامت‌گذاری و تکمیل می‌شوند. پیش از ذخیره، همه موارد را بازبینی کنید." startLabel="ضبط صوتی فرم تروما" />
+      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} onUpload={voice.uploadFile} disabled={disabled} title="ثبت صوتی فرم تروما" subtitle="یافته‌ها پس از پردازش در فرم زیر علامت‌گذاری و تکمیل می‌شوند. پیش از ذخیره، همه موارد را بازبینی کنید." startLabel="ضبط صوتی فرم تروما" />
       <Section title="At the Time of Arrival" subtitle="وضعیت بیمار در زمان ورود">
         <CheckGroup options={arrivalOptions} {...list('arrival')} disabled={disabled} />
       </Section>

@@ -14,6 +14,7 @@ import {
   HeartPulse,
   LoaderCircle,
   Plus,
+  Pencil,
   PlusCircle,
   Save,
   Search,
@@ -27,8 +28,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { consciousnessOptions, dietOptions } from '@/lib/clinical-types';
-import type { HistoryDraft, OrderBatch, OrdersDraft, Patient, TraumaForm, VoiceResult } from '@/lib/clinical-types';
+import { activityLabels, activityOptions, conditionOptions, consciousnessOptions, dietOptions } from '@/lib/clinical-types';
+import type { HistoryDraft, OrderBatch, OrderItem, OrdersDraft, Patient, TraumaForm, VoiceResult } from '@/lib/clinical-types';
 
 import { PdfButton } from './pdf-button';
 import { exportHistoryPdf, exportOrdersPdf, exportTraumaPdf } from './pdf-export';
@@ -122,20 +123,41 @@ export function WardApp() {
   // oxlint-disable-next-line react/react-compiler -- initial server data must be loaded after hydration.
   useEffect(() => { void loadPatients(); }, [loadPatients]);
 
+  // The physician discharges; the ward desk approves. A discharged patient leaves the physician's list
+  // at once and stays at the top of the desk's list, tagged, until the discharge is approved.
+  const canDischarge = role === 'پزشک';
+  const canApproveDischarge = !canDischarge;
+  const pendingCount = patients.filter((patient) => patient.status === 'discharge_pending').length;
+
   const filteredPatients = useMemo(() => {
     const term = toLatinDigits(search).trim().toLowerCase();
-    return patients.filter((patient) => `${patient.firstName} ${patient.lastName} ${patient.nationalId}`.toLowerCase().includes(term));
-  }, [patients, search]);
+    const visible = canDischarge
+      ? patients.filter((patient) => patient.status === 'active')
+      : [...patients].sort((a, b) => Number(b.status === 'discharge_pending') - Number(a.status === 'discharge_pending'));
+    return visible.filter((patient) => `${patient.firstName} ${patient.lastName} ${patient.nationalId}`.toLowerCase().includes(term));
+  }, [patients, search, canDischarge]);
 
-  const canDischarge = role !== 'مدیر سیستم';
-
-  async function discharge(patient: Patient) {
-    if (!window.confirm(`آیا از ترخیص ${patient.firstName} ${patient.lastName} مطمئن هستید؟`)) return;
-    await api({ action: 'dischargePatient', patientId: patient.id, actor });
-    notify('بیمار ترخیص و از فهرست فعال خارج شد.');
+  async function closeAfter(request: Record<string, unknown>, message: string) {
+    try {
+      await api({ ...request, actor });
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : 'ثبت ترخیص انجام نشد.');
+      return;
+    }
+    notify(message);
     setSelectedId(null);
     setProfile(null);
     await loadPatients();
+  }
+
+  async function discharge(patient: Patient) {
+    if (!window.confirm(`آیا از ترخیص ${patient.firstName} ${patient.lastName} مطمئن هستید؟ ترخیص برای تأیید به مسئول پذیرش بخش ارسال می‌شود.`)) return;
+    await closeAfter({ action: 'dischargePatient', patientId: patient.id }, 'بیمار ترخیص شد و برای تأیید به مسئول پذیرش بخش ارسال شد.');
+  }
+
+  async function approveDischarge(patient: Patient) {
+    if (!window.confirm(`ترخیص ${patient.firstName} ${patient.lastName} تأیید شود؟ بیمار از فهرست بیماران خارج می‌شود.`)) return;
+    await closeAfter({ action: 'approveDischarge', patientId: patient.id }, 'ترخیص بیمار تأیید شد و از فهرست خارج شد.');
   }
 
   if (selectedId && profile) {
@@ -148,7 +170,9 @@ export function WardApp() {
           onBack={() => { setSelectedId(null); setProfile(null); void loadPatients(); }}
           onRefresh={() => loadProfile(selectedId)}
           onDischarge={() => discharge(profile.patient)}
+          onApproveDischarge={() => approveDischarge(profile.patient)}
           canDischarge={canDischarge}
+          canApproveDischarge={canApproveDischarge}
           notify={notify}
         />
         <Toast message={toast} />
@@ -163,7 +187,7 @@ export function WardApp() {
           <div>
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[#0d6b63]"><Stethoscope className="size-4" /> اورژانس · بیمارستان سینا</div>
             <h1 className="text-2xl font-black tracking-tight sm:text-3xl">بیماران بستری</h1>
-            <p className="mt-1 text-sm text-slate-500">{patients.length.toLocaleString('fa-IR')} بیمار فعال در اورژانس حضور دارند.</p>
+            <p className="mt-1 text-sm text-slate-500">{(patients.length - pendingCount).toLocaleString('fa-IR')} بیمار فعال در اورژانس حضور دارند.{canApproveDischarge && pendingCount > 0 && <span className="font-semibold text-amber-700"> · {pendingCount.toLocaleString('fa-IR')} ترخیص در انتظار تأیید</span>}</p>
           </div>
           <Button onClick={() => setAddOpen(true)} size="lg" className="h-11 bg-[#d57b36] px-4 text-white shadow-sm hover:bg-[#c46d2c]">
             <UserPlus /> افزودن بیمار جدید
@@ -184,7 +208,7 @@ export function WardApp() {
         ) : (
           <div className="grid gap-4 xl:grid-cols-2">
             {filteredPatients.map((patient, index) => (
-              <PatientCard key={patient.id} patient={patient} index={index} onOpen={() => void loadProfile(patient.id)} onDischarge={() => void discharge(patient)} canDischarge={canDischarge} />
+              <PatientCard key={patient.id} patient={patient} index={index} onOpen={() => void loadProfile(patient.id)} onDischarge={() => void discharge(patient)} onApproveDischarge={() => void approveDischarge(patient)} canDischarge={canDischarge} canApproveDischarge={canApproveDischarge} />
             ))}
           </div>
         )}
@@ -218,10 +242,11 @@ function AppFrame({ role, setRole, children }: { role: Role; setRole: (role: Rol
   );
 }
 
-function PatientCard({ patient, index, onOpen, onDischarge, canDischarge }: { patient: Patient; index: number; onOpen: () => void; onDischarge: () => void; canDischarge: boolean }) {
+function PatientCard({ patient, index, onOpen, onDischarge, onApproveDischarge, canDischarge, canApproveDischarge }: { patient: Patient; index: number; onOpen: () => void; onDischarge: () => void; onApproveDischarge: () => void; canDischarge: boolean; canApproveDischarge: boolean }) {
   const colors = ['bg-teal-100 text-teal-800', 'bg-blue-100 text-blue-800', 'bg-amber-100 text-amber-800', 'bg-violet-100 text-violet-800'];
+  const awaitingApproval = patient.status === 'discharge_pending';
   return (
-    <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80 transition hover:-translate-y-0.5 hover:shadow-md">
+    <Card className={`border-0 bg-white shadow-sm ring-1 transition hover:-translate-y-0.5 hover:shadow-md ${awaitingApproval ? 'ring-amber-300' : 'ring-slate-200/80'}`}>
       <CardHeader className="grid-cols-[1fr_auto]">
         <div className="flex items-center gap-3">
           <span className={`grid size-12 place-items-center rounded-2xl font-bold ${colors[index % colors.length]}`}>{patient.firstName[0]}{patient.lastName[0]}</span>
@@ -229,7 +254,7 @@ function PatientCard({ patient, index, onOpen, onDischarge, canDischarge }: { pa
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
           {patient.isTrauma && <Badge className="bg-red-50 text-red-700">ترومایی</Badge>}
-          <Badge className="bg-emerald-50 text-emerald-700">بستری فعال</Badge>
+          {awaitingApproval ? <Badge className="bg-amber-100 text-amber-800">ترخیص شده</Badge> : <Badge className="bg-emerald-50 text-emerald-700">بستری فعال</Badge>}
         </div>
       </CardHeader>
       <CardContent>
@@ -239,7 +264,8 @@ function PatientCard({ patient, index, onOpen, onDischarge, canDischarge }: { pa
         </div>
         <div className="mt-4 flex gap-2">
           <Button onClick={onOpen} className="flex-1 bg-[#0d4f4a] text-white"><ClipboardList /> مشاهده پرونده</Button>
-          <Button onClick={onDischarge} disabled={!canDischarge} variant="outline" className="text-slate-600">ترخیص</Button>
+          {canDischarge && !awaitingApproval && <Button onClick={onDischarge} variant="outline" className="text-slate-600">ترخیص</Button>}
+          {canApproveDischarge && awaitingApproval && <Button onClick={onApproveDischarge} className="bg-amber-600 text-white hover:bg-amber-700"><CheckCircle2 /> تأیید ترخیص</Button>}
         </div>
       </CardContent>
     </Card>
@@ -295,12 +321,13 @@ function AddPatientDialog({ open, onOpenChange, actor, onSaved }: { open: boolea
   );
 }
 
-function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, canDischarge, notify }: {
-  data: ProfileData; actor: string; role: Role; onBack: () => void; onRefresh: () => Promise<void>; onDischarge: () => void; canDischarge: boolean; notify: (message: string) => void;
+function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, onApproveDischarge, canDischarge, canApproveDischarge, notify }: {
+  data: ProfileData; actor: string; role: Role; onBack: () => void; onRefresh: () => Promise<void>; onDischarge: () => void; onApproveDischarge: () => void; canDischarge: boolean; canApproveDischarge: boolean; notify: (message: string) => void;
 }) {
   const [tab, setTab] = useState<'summary' | 'history' | 'trauma' | 'orders'>('summary');
   const [addingTrauma, setAddingTrauma] = useState(false);
   const patient = data.patient;
+  const awaitingApproval = patient.status === 'discharge_pending';
   const canEdit = role !== 'مدیر سیستم';
   const pending = data.orderBatches.flatMap((batch) => batch.items).filter((item) => !item.isDone).length;
 
@@ -325,14 +352,15 @@ function PatientProfile({ data, actor, role, onBack, onRefresh, onDischarge, can
         <Button onClick={onBack} variant="ghost"><ArrowRight /> بازگشت به بیماران</Button>
         <div className="flex flex-wrap justify-end gap-2">
           {!patient.isTrauma && <Button disabled={!canEdit || addingTrauma} onClick={() => void addTraumaForm()} variant="outline" className="border-red-200 text-red-700 hover:bg-red-50">{addingTrauma ? <LoaderCircle className="animate-spin" /> : <PlusCircle />} اضافه کردن فرم تروما</Button>}
-          <Button disabled={!canDischarge} onClick={onDischarge} variant="destructive">ترخیص بیمار</Button>
+          {canDischarge && !awaitingApproval && <Button onClick={onDischarge} variant="destructive">ترخیص بیمار</Button>}
+          {canApproveDischarge && awaitingApproval && <Button onClick={onApproveDischarge} className="bg-amber-600 text-white hover:bg-amber-700"><CheckCircle2 /> تأیید ترخیص</Button>}
         </div>
       </div>
       <Card className="mb-5 border-0 bg-gradient-to-l from-[#0d4f4a] to-[#14746b] text-white shadow-lg ring-0">
         <CardContent className="grid gap-5 md:grid-cols-[1fr_auto] md:items-center">
           <div className="flex items-center gap-4">
             <span className="grid size-16 place-items-center rounded-2xl bg-white/15 text-xl font-black ring-1 ring-white/20">{patient.firstName[0]}{patient.lastName[0]}</span>
-            <div><h1 className="flex flex-wrap items-center gap-2 text-2xl font-black">{patient.firstName} {patient.lastName}{patient.isTrauma && <Badge className="bg-red-500 text-white">ترومایی</Badge>}</h1><p className="mt-1 text-sm text-teal-100">کد ملی: <span dir="ltr">{patient.nationalId}</span> · {patient.sex}{patient.age != null && ` · ${patient.age} ساله`}</p></div>
+            <div><h1 className="flex flex-wrap items-center gap-2 text-2xl font-black">{patient.firstName} {patient.lastName}{patient.isTrauma && <Badge className="bg-red-500 text-white">ترومایی</Badge>}{awaitingApproval && <Badge className="bg-amber-300 text-amber-950">ترخیص شده</Badge>}</h1><p className="mt-1 text-sm text-teal-100">کد ملی: <span dir="ltr">{patient.nationalId}</span> · {patient.sex}{patient.age != null && ` · ${patient.age} ساله`}</p></div>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-xs text-teal-100">محل بستری</p><p className="mt-1 font-bold">اتاق {patient.room} · تخت {patient.bed}</p></div>
@@ -394,7 +422,7 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved, onExportPd
 
   return (
     <div className="space-y-5">
-      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={!canEdit} title="ثبت صوتی شرح حال" subtitle="صدا توسط وردست پردازش و در فرم زیر جای‌گذاری می‌شود. پیش از ذخیره، حتما همه فیلدها را بازبینی کنید." startLabel="ضبط صوتی شرح حال" />
+      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} onUpload={voice.uploadFile} disabled={!canEdit} title="ثبت صوتی شرح حال" subtitle="صدا توسط وردست پردازش و در فرم زیر جای‌گذاری می‌شود. پیش از ذخیره، حتما همه فیلدها را بازبینی کنید." startLabel="ضبط صوتی شرح حال" />
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><CardTitle className="font-bold">پیش‌نویس ساختاریافته شرح حال</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2">
         <Field label="علت مراجعه" className="sm:col-span-2"><DictationTextarea disabled={!canEdit} value={draft.chiefComplaint} onValueChange={(value) => update('chiefComplaint', value)} /></Field>
         <Field label="زمان شروع علائم بیماری" className="sm:col-span-2"><DictationInput disabled={!canEdit} value={draft.onset} onValueChange={(value) => update('onset', value)} /></Field>
@@ -429,11 +457,31 @@ function HistoryEditor({ initial, patientId, actor, canEdit, onSaved, onExportPd
   );
 }
 
+type OrderHeader = { impression: string; diet: string; activity: string; condition: string };
+const emptyOrderHeader: OrderHeader = { impression: '', diet: '', activity: '', condition: '' };
+const orderHeaderError = 'برای دستور اول، تکمیل تشخیص اولیه، رژیم غذایی، فعالیت و وضعیت الزامی است.';
+const isHeaderComplete = (header: OrderHeader) => Boolean(header.impression.trim() && header.diet && header.activity && header.condition);
+
+// Orders saved before these lists existed can hold a value outside them; the picker then starts empty.
+function fromList(value: string | null | undefined, options: readonly string[]) {
+  return value && options.includes(value) ? value : '';
+}
+
+function OrderHeaderFields({ value, onChange, disabled }: { value: OrderHeader; onChange: (value: OrderHeader) => void; disabled: boolean }) {
+  const set = (key: keyof OrderHeader) => (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => onChange({ ...value, [key]: event.target.value });
+  return (
+    <div className="grid gap-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Field label="Impression · تشخیص اولیه *"><input disabled={disabled} className="control h-10" value={value.impression} onChange={set('impression')} /></Field>
+      <Field label="Condition · وضعیت *"><select disabled={disabled} className="control h-10" value={value.condition} onChange={set('condition')}><option value="">انتخاب کنید</option>{conditionOptions.map((option) => <option key={option}>{option}</option>)}</select></Field>
+      <Field label="Diet · رژیم غذایی *"><select disabled={disabled} className="control h-10" value={value.diet} onChange={set('diet')}><option value="">انتخاب کنید</option>{dietOptions.map((option) => <option key={option}>{option}</option>)}</select></Field>
+      <Field label="Activity · فعالیت *"><select disabled={disabled} className="control h-10" value={value.activity} onChange={set('activity')}><option value="">انتخاب کنید</option>{activityOptions.map((option) => <option key={option} value={option}>{activityLabels[option]}</option>)}</select></Field>
+    </div>
+  );
+}
+
 function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify, onExportPdf }: { patientId: string; batches: OrderBatch[]; actor: string; canApprove: boolean; onChanged: () => Promise<void>; notify: (message: string) => void; onExportPdf: () => void }) {
   const isInitial = batches.length === 0;
-  const [impression, setImpression] = useState('');
-  const [diet, setDiet] = useState('');
-  const [activity, setActivity] = useState('');
+  const [header, setHeader] = useState<OrderHeader>(emptyOrderHeader);
   const [items, setItems] = useState<string[]>(['']);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -443,9 +491,12 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify,
   // Dictated orders are appended to what is already in the draft, never replace it.
   function applyDictation({ transcript: text, draft }: VoiceResult<OrdersDraft>) {
     if (isInitial) {
-      if (draft.impression) setImpression(draft.impression);
-      if (draft.diet) setDiet(draft.diet);
-      if (draft.activity) setActivity(draft.activity);
+      setHeader((current) => ({
+        impression: draft.impression || current.impression,
+        diet: draft.diet || current.diet,
+        activity: draft.activity || current.activity,
+        condition: draft.condition || current.condition,
+      }));
     }
     setItems((current) => {
       const merged = [...current.filter((item) => item.trim()), ...draft.items];
@@ -456,12 +507,12 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify,
 
   async function approve() {
     setError('');
-    if (isInitial && (!impression.trim() || !diet || !activity.trim())) { setError('برای دستور اول، تکمیل تشخیص اولیه، رژیم غذایی و فعالیت الزامی است.'); return; }
+    if (isInitial && !isHeaderComplete(header)) { setError(orderHeaderError); return; }
     if (!items.some((item) => item.trim())) { setError('حداقل یک دستور وارد کنید.'); return; }
     setSaving(true);
     try {
-      await api({ action: 'approveOrders', patientId, isInitial, impression, diet, activity, items, actor });
-      setImpression(''); setDiet(''); setActivity(''); setItems(['']); setTranscript(''); notify('دستورات تأیید و به‌صورت جداگانه ثبت شدند.'); await onChanged();
+      await api({ action: 'approveOrders', patientId, isInitial, ...header, items, actor });
+      setHeader(emptyOrderHeader); setItems(['']); setTranscript(''); notify('دستورات تأیید و به‌صورت جداگانه ثبت شدند.'); await onChanged();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'ثبت دستورات انجام نشد.'); } finally { setSaving(false); }
   }
 
@@ -472,21 +523,78 @@ function OrdersPanel({ patientId, batches, actor, canApprove, onChanged, notify,
 
   return (
     <div className="space-y-5">
-      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} disabled={!canApprove} title="ثبت صوتی دستورات" subtitle="هر دستور جداگانه استخراج و به پیش‌نویس اضافه می‌شود. پیش از تأیید، همه آیتم‌ها را بازبینی کنید." />
+      <VoiceBanner status={voice.status} error={voice.error} transcript={transcript} onStart={() => void voice.start()} onStop={voice.stop} onUpload={voice.uploadFile} disabled={!canApprove} title="ثبت صوتی دستورات" subtitle="هر دستور جداگانه استخراج و به پیش‌نویس اضافه می‌شود. پیش از تأیید، همه آیتم‌ها را بازبینی کنید." />
       <Card className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><div className="flex items-center justify-between gap-3"><CardTitle className="font-bold">پیش‌نویس دستور جدید</CardTitle>{isInitial && <Badge className="bg-amber-50 text-amber-800">دستور اولیه بیمار</Badge>}</div></CardHeader><CardContent className="space-y-4">
-        {isInitial && <div className="grid gap-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4 sm:grid-cols-3">
-          <Field label="Impression · تشخیص اولیه *"><DictationTextarea disabled={!canApprove} value={impression} onValueChange={setImpression} /></Field>
-          <Field label="Diet · رژیم غذایی *"><select disabled={!canApprove} className="control" value={diet} onChange={(event) => setDiet(event.target.value)}><option value="">انتخاب کنید</option>{dietOptions.map((option) => <option key={option}>{option}</option>)}</select></Field>
-          <Field label="Activity · فعالیت *"><DictationTextarea disabled={!canApprove} value={activity} onValueChange={setActivity} /></Field>
-        </div>}
+        {isInitial && <OrderHeaderFields value={header} onChange={setHeader} disabled={!canApprove} />}
         <div><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">آیتم‌های دستور</h3><Button disabled={!canApprove} size="sm" variant="outline" onClick={() => setItems((current) => [...current, ''])}><Plus /> افزودن آیتم</Button></div><div className="space-y-2">{items.map((item, index) => <div key={index} className="flex gap-2"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-sm font-bold">{(index + 1).toLocaleString('fa-IR')}</span><DictationInput disabled={!canApprove} className="h-9" value={item} onValueChange={(text) => setItems((current) => current.map((value, itemIndex) => itemIndex === index ? text : value))} placeholder="متن استاندارد دستور" /><Button disabled={!canApprove || items.length === 1} size="icon-lg" variant="ghost" onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></Button></div>)}</div></div>
         {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {!canApprove && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">تنها پزشک می‌تواند دستورات را ثبت و تأیید کند.</p>}
         <div className="flex justify-end"><Button disabled={!canApprove || saving} onClick={() => void approve()} className="bg-[#0d4f4a] text-white">{saving ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />} تأیید و ثبت دستورات</Button></div>
       </CardContent></Card>
 
-      <div><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-black">دستورات ثبت‌شده</h2><PdfButton disabled={batches.length === 0} disabledHint="هنوز دستوری ثبت نشده است." onClick={onExportPdf} /></div>{batches.length === 0 ? <Card className="border-0 bg-white py-8 text-center shadow-sm"><CardContent><ClipboardCheck className="mx-auto mb-2 size-8 text-slate-300" /><p className="text-sm text-slate-500">هنوز دستوری ثبت نشده است.</p></CardContent></Card> : <div className="space-y-4">{batches.map((batch) => <Card key={batch.id} className="border-0 bg-white shadow-sm ring-1 ring-slate-200/80"><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle className="font-bold">{batch.isInitial ? 'دستور اولیه' : 'دستور تکمیلی'}</CardTitle><span className="text-xs text-slate-400">{faDate(batch.approvedAt)}</span></div>{batch.isInitial && <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><span className="rounded-lg bg-slate-50 p-2"><b>Impression:</b> {batch.impression}</span><span className="rounded-lg bg-slate-50 p-2"><b>Diet:</b> {batch.diet}</span><span className="rounded-lg bg-slate-50 p-2"><b>Activity:</b> {batch.activity}</span></div>}</CardHeader><CardContent className="space-y-2">{batch.items.map((item) => <button key={item.id} onClick={() => void toggle(item.id, !item.isDone)} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-right transition ${item.isDone ? 'border-emerald-200 bg-emerald-50 text-slate-500' : 'border-slate-200 bg-white hover:border-teal-300'}`}><span className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border ${item.isDone ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300'}`}>{item.isDone && <Check className="size-3" />}</span><span className={item.isDone ? 'line-through' : ''}>{item.text}</span><Badge variant="outline" className="mr-auto">{item.isDone ? 'انجام‌شده' : 'انجام‌نشده'}</Badge></button>)}</CardContent></Card>)}</div>}</div>
+      <div><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-black">دستورات ثبت‌شده</h2><PdfButton disabled={batches.length === 0} disabledHint="هنوز دستوری ثبت نشده است." onClick={onExportPdf} /></div>{batches.length === 0 ? <Card className="border-0 bg-white py-8 text-center shadow-sm"><CardContent><ClipboardCheck className="mx-auto mb-2 size-8 text-slate-300" /><p className="text-sm text-slate-500">هنوز دستوری ثبت نشده است.</p></CardContent></Card> : <div className="space-y-4">{batches.map((batch) => <OrderBatchCard key={batch.id} batch={batch} patientId={patientId} actor={actor} canEdit={canApprove} deletable={!batch.isInitial || batches.length === 1} onToggle={(item) => void toggle(item.id, !item.isDone)} onChanged={onChanged} notify={notify} />)}</div>}</div>
     </div>
+  );
+}
+
+// A saved order: items are ticked off as they are done, and the physician can reword, remove or delete them.
+function OrderBatchCard({ batch, patientId, actor, canEdit, deletable, onToggle, onChanged, notify }: { batch: OrderBatch; patientId: string; actor: string; canEdit: boolean; deletable: boolean; onToggle: (item: OrderItem) => void; onChanged: () => Promise<void>; notify: (message: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [header, setHeader] = useState<OrderHeader>(emptyOrderHeader);
+  const [items, setItems] = useState<{ id: string; text: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const title = batch.isInitial ? 'دستور اولیه' : 'دستور تکمیلی';
+
+  function startEditing() {
+    setHeader({ impression: batch.impression ?? '', diet: fromList(batch.diet, dietOptions), activity: fromList(batch.activity, activityOptions), condition: fromList(batch.condition, conditionOptions) });
+    setItems(batch.items.map(({ id, text }) => ({ id, text })));
+    setError('');
+    setEditing(true);
+  }
+
+  async function save() {
+    setError('');
+    if (batch.isInitial && !isHeaderComplete(header)) { setError(orderHeaderError); return; }
+    if (items.some((item) => !item.text.trim())) { setError('متن یکی از آیتم‌ها خالی است. برای حذف آیتم از دکمه حذف کنار آن استفاده کنید.'); return; }
+    setBusy(true);
+    try {
+      await api({ action: 'editOrderBatch', patientId, batchId: batch.id, ...header, items, actor });
+      setEditing(false); notify('تغییرات دستور ذخیره شد.'); await onChanged();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'ذخیره تغییرات انجام نشد.'); } finally { setBusy(false); }
+  }
+
+  async function remove() {
+    if (!window.confirm(`${title} ثبت‌شده در ${faDate(batch.approvedAt)} با ${batch.items.length.toLocaleString('fa-IR')} آیتم حذف شود؟ این کار قابل بازگشت نیست.`)) return;
+    setError('');
+    setBusy(true);
+    try {
+      await api({ action: 'deleteOrderBatch', patientId, batchId: batch.id, actor });
+      notify('دستور حذف شد.'); await onChanged();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'حذف دستور انجام نشد.'); } finally { setBusy(false); }
+  }
+
+  return (
+    <Card className={`border-0 bg-white shadow-sm ring-1 ${editing ? 'ring-teal-300' : 'ring-slate-200/80'}`}><CardHeader>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1"><CardTitle className="font-bold">{title}</CardTitle><span className="text-xs text-slate-400">{faDate(batch.approvedAt)}</span></div>
+        {canEdit && !editing && <div className="flex gap-1">
+          <Button size="sm" variant="ghost" disabled={busy} onClick={startEditing}><Pencil /> ویرایش</Button>
+          <Button size="sm" variant="ghost" disabled={busy || !deletable} title={deletable ? 'حذف کامل این دستور' : 'تا وقتی دستور تکمیلی ثبت شده است، دستور اولیه حذف نمی‌شود.'} onClick={() => void remove()} className="text-red-600 hover:bg-red-50 hover:text-red-700">{busy ? <LoaderCircle className="animate-spin" /> : <Trash2 />} حذف</Button>
+        </div>}
+      </div>
+      {batch.isInitial && !editing && <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4"><span className="rounded-lg bg-slate-50 p-2"><b>Impression:</b> {batch.impression}</span><span className="rounded-lg bg-slate-50 p-2"><b>Condition:</b> {batch.condition}</span><span className="rounded-lg bg-slate-50 p-2"><b>Diet:</b> {batch.diet}</span><span className="rounded-lg bg-slate-50 p-2"><b>Activity:</b> {batch.activity}</span></div>}
+    </CardHeader><CardContent className="space-y-2">
+      {editing ? <>
+        {batch.isInitial && <OrderHeaderFields value={header} onChange={setHeader} disabled={busy} />}
+        {items.map((item, index) => <div key={item.id} className="flex gap-2"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-sm font-bold">{(index + 1).toLocaleString('fa-IR')}</span><DictationInput disabled={busy} className="h-9" value={item.text} onValueChange={(text) => setItems((current) => current.map((value) => value.id === item.id ? { ...value, text } : value))} /><Button disabled={busy || items.length === 1} size="icon-lg" variant="ghost" aria-label="حذف این آیتم" title={items.length === 1 ? 'برای حذف آخرین آیتم، کل دستور را حذف کنید.' : 'حذف این آیتم'} onClick={() => setItems((current) => current.filter((value) => value.id !== item.id))}><Trash2 /></Button></div>)}
+        {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2 pt-2"><Button variant="outline" disabled={busy} onClick={() => setEditing(false)}>انصراف</Button><Button disabled={busy} onClick={() => void save()} className="bg-[#0d4f4a] text-white">{busy ? <LoaderCircle className="animate-spin" /> : <Save />} ذخیره تغییرات</Button></div>
+      </> : <>
+        {batch.items.map((item) => <button key={item.id} onClick={() => onToggle(item)} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-right transition ${item.isDone ? 'border-emerald-200 bg-emerald-50 text-slate-500' : 'border-slate-200 bg-white hover:border-teal-300'}`}><span className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border ${item.isDone ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300'}`}>{item.isDone && <Check className="size-3" />}</span><span className={item.isDone ? 'line-through' : ''}>{item.text}</span><Badge variant="outline" className="mr-auto">{item.isDone ? 'انجام‌شده' : 'انجام‌نشده'}</Badge></button>)}
+        {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      </>}
+    </CardContent></Card>
   );
 }
 

@@ -12,6 +12,15 @@ const MAX_RECORDING_MS = 15 * 60 * 1000;
 const AUDIO_BITS_PER_SECOND = 32_000;
 const preferredMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
 
+// Uploaded files are typed by extension: browsers report .m4a as audio/x-m4a or audio/mp4 depending on
+// the OS, and leave .opus (WhatsApp voice notes, an Ogg container) blank. Same limit as /api/voice.
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const fileTypes: Record<string, string> = {
+  webm: 'audio/webm', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', m4a: 'audio/mp4',
+  mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac', flac: 'audio/flac',
+};
+export const AUDIO_FILE_ACCEPT = ['audio/*', ...Object.keys(fileTypes).map((extension) => `.${extension}`)].join(',');
+
 export function useVoiceDictation<T>(mode: VoiceMode, onResult: (result: VoiceResult<T>) => void, patientId?: string) {
   const [status, setStatus] = useState<DictationStatus>('idle');
   const [error, setError] = useState('');
@@ -87,5 +96,24 @@ export function useVoiceDictation<T>(mode: VoiceMode, onResult: (result: VoiceRe
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
   }
 
-  return { status, error, start, stop };
+  // A recording made earlier (on a phone, say) goes through the same transcription as a live one.
+  function uploadFile(file: File) {
+    setError('');
+    const type = fileTypes[file.name.split('.').pop()?.toLowerCase() ?? ''];
+    if (!type) {
+      setError('قالب فایل صوتی پشتیبانی نمی‌شود. فایل mp3، m4a، wav، ogg، opus یا webm انتخاب کنید.');
+      return;
+    }
+    if (!file.size) {
+      setError('فایل صوتی خالی است.');
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setError('حجم فایل صوتی بیش از ۲۰ مگابایت است.');
+      return;
+    }
+    void upload(file.slice(0, file.size, type));
+  }
+
+  return { status, error, start, stop, uploadFile };
 }

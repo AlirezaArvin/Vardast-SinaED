@@ -8,7 +8,7 @@ export type Patient = {
   room: string;
   bed: string;
   admittedAt: string;
-  status: 'active' | 'discharged';
+  status: 'active' | 'discharge_pending' | 'discharged';
   dischargedAt?: string | null;
   isTrauma: boolean;
 };
@@ -41,6 +41,7 @@ export type OrderBatch = {
   impression?: string | null;
   diet?: string | null;
   activity?: string | null;
+  condition?: string | null;
   isInitial: boolean;
   approvedAt: string;
   items: OrderItem[];
@@ -48,10 +49,14 @@ export type OrderBatch = {
 
 export const consciousnessOptions = ['هوشیار', 'لتارژی', 'ابتوندیشن', 'استوپور', 'کما', 'گیجی و منگی', 'بی‌قراری'] as const;
 export const dietOptions = ['NPO', 'PO Regular', 'Type 1 Diet', 'Type 2 Diet'] as const;
+// The code is what is stored and printed; the label spells it out in the picker.
+export const activityOptions = ['CBR', 'OOB', 'Ambulate'] as const;
+export const activityLabels: Record<(typeof activityOptions)[number], string> = { CBR: 'CBR (Complete Bed Rest)', OOB: 'OOB (Out of Bed)', Ambulate: 'Ambulate' };
+export const conditionOptions = ['Critical', 'Emergent', 'Urgent', 'Fair', 'Good'] as const;
 
 // 'text' transcribes into a single field: no LLM structuring, the draft is the transcript itself.
 export type VoiceMode = 'history' | 'orders' | 'trauma' | 'text';
-export type OrdersDraft = { impression: string; diet: string; activity: string; items: string[] };
+export type OrdersDraft = { impression: string; diet: string; activity: string; condition: string; items: string[] };
 export type VoiceResult<T> = { transcript: string; draft: T };
 
 export const arrivalOptions = ['AM', 'PM', 'Airway', 'Oral', 'ETT', 'Backboard', 'Cervical Collar', 'Splinting', 'IV Line', 'O2', 'Medication', 'CPR'] as const;

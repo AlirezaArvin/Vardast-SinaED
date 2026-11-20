@@ -40,6 +40,7 @@ export const orderBatches = sqliteTable('order_batches', {
   impression: text('impression'),
   diet: text('diet'),
   activity: text('activity'),
+  condition: text('condition'),
   isInitial: integer('is_initial', { mode: 'boolean' }).notNull().default(false),
   createdBy: text('created_by').notNull(),
   approvedAt: text('approved_at').notNull(),

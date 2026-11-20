@@ -6,6 +6,8 @@ export const LLM_MODEL = 'openai/gpt-5.4-nano';
 // The trauma form maps one dictation onto ~50 fields. Nano has dropped findings and misread spoken
 // numbers there before; 'openai/gpt-5.4-mini' did better if that shows up again.
 export const TRAUMA_LLM_MODEL = 'openai/gpt-5.4-nano';
+// Fills the admission history and writes its narrative paragraph.
+export const HISTORY_LLM_MODEL = 'openai/gpt-5.4-mini';
 
 export class VoiceError extends Error {
   constructor(message: string, readonly status = 502) {

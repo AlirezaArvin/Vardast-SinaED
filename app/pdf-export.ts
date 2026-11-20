@@ -196,7 +196,7 @@ function ordersBody(batches: OrderBatch[]) {
   const chronological = [...batches].sort((a, b) => a.approvedAt.localeCompare(b.approvedAt));
   return chronological.map((batch, index) => `<div class="batch">
     <h2>${batch.isInitial ? 'دستور اولیه' : `دستور تکمیلی ${index.toLocaleString('fa-IR')}`} <small>تأیید: ${faDate(batch.approvedAt)}</small></h2>
-    ${batch.isInitial ? `<div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:6px">${field('Impression · تشخیص اولیه', batch.impression)}${field('Diet · رژیم غذایی', batch.diet)}${field('Activity · فعالیت', batch.activity)}</div>` : ''}
+    ${batch.isInitial ? `<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-bottom:6px">${field('Impression · تشخیص اولیه', batch.impression)}${field('Condition · وضعیت', batch.condition)}${field('Diet · رژیم غذایی', batch.diet)}${field('Activity · فعالیت', batch.activity)}</div>` : ''}
     <table class="data"><thead><tr><th class="num">#</th><th>دستور</th><th style="width:70px">وضعیت</th><th style="width:120px">زمان انجام</th></tr></thead><tbody>
       ${batch.items.map((item, itemIndex) => `<tr><td class="num">${itemIndex + 1}</td><td class="bidi">${show(item.text)}</td><td><span class="status ${item.isDone ? 'done' : 'open'}">${item.isDone ? 'انجام‌شده' : 'انجام‌نشده'}</span></td><td>${item.doneAt ? faDate(item.doneAt) : '<span class="empty">—</span>'}</td></tr>`).join('')}
     </tbody></table>

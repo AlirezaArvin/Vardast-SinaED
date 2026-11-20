@@ -1,4 +1,5 @@
 import { audit, getDatabase } from '@/db/runtime';
+import { activityOptions, conditionOptions, dietOptions } from '@/lib/clinical-types';
 
 type RequestBody = Record<string, unknown> & { action?: string; actor?: string };
 
@@ -7,7 +8,21 @@ const patientSelect = `SELECT
   age, sex, room, bed, admitted_at AS admittedAt,
   status, discharged_at AS dischargedAt, is_trauma AS isTrauma FROM patients`;
 
-const withTraumaFlag = (patient: Record<string, unknown> | null) => patient && { ...patient, isTrauma: Boolean(patient.isTrauma) };
+type OrderHeader = { impression: string; diet: string; activity: string; condition: string };
+
+const orderHeaderError = 'تکمیل تشخیص اولیه، رژیم غذایی، فعالیت و وضعیت الزامی است.';
+
+function orderHeader(body: RequestBody): OrderHeader {
+  const field = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  return { impression: field(body.impression), diet: field(body.diet), activity: field(body.activity), condition: field(body.condition) };
+}
+
+function isCompleteHeader({ impression, diet, activity, condition }: OrderHeader) {
+  const isOneOf = (value: string, options: readonly string[]) => options.includes(value);
+  return Boolean(impression) && isOneOf(diet, dietOptions) && isOneOf(activity, activityOptions) && isOneOf(condition, conditionOptions);
+}
+
+const withTraumaFlag =(patient: Record<string, unknown> | null) => patient && { ...patient, isTrauma: Boolean(patient.isTrauma) };
 
 export async function GET(request: Request) {
   const db = await getDatabase();
@@ -20,7 +35,7 @@ export async function GET(request: Request) {
     const historyRow = await db.prepare('SELECT payload FROM histories WHERE patient_id = ?').bind(patientId).first<{ payload: string }>();
     const traumaRow = await db.prepare('SELECT payload FROM trauma_forms WHERE patient_id = ?').bind(patientId).first<{ payload: string }>();
     const batches = await db.prepare(
-      `SELECT id, impression, diet, activity, is_initial AS isInitial, approved_at AS approvedAt
+      `SELECT id, impression, diet, activity, condition, is_initial AS isInitial, approved_at AS approvedAt
        FROM order_batches WHERE patient_id = ? ORDER BY created_at DESC`,
     ).bind(patientId).all<Record<string, unknown>>();
     const items = await db.prepare(
@@ -40,7 +55,8 @@ export async function GET(request: Request) {
     });
   }
 
-  const patients = await db.prepare(`${patientSelect} WHERE status = 'active' ORDER BY admitted_at DESC`).all<Record<string, unknown>>();
+  // Patients the physician discharged stay listed until the ward desk approves the discharge.
+  const patients = await db.prepare(`${patientSelect} WHERE status IN ('active', 'discharge_pending') ORDER BY admitted_at DESC`).all<Record<string, unknown>>();
   return Response.json({ patients: patients.results.map(withTraumaFlag) });
 }
 
@@ -66,9 +82,19 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, id });
   }
 
+  // The physician's discharge sets the discharge time; the ward desk then approves it to close the admission.
   if (body.action === 'dischargePatient') {
     const patientId = String(body.patientId);
-    await db.prepare("UPDATE patients SET status = 'discharged', discharged_at = ? WHERE id = ?").bind(now, patientId).run();
+    const result = await db.prepare("UPDATE patients SET status = 'discharge_pending', discharged_at = ? WHERE id = ? AND status = 'active'").bind(now, patientId).run();
+    if (!result.meta.changes) return Response.json({ error: 'این بیمار در وضعیت بستری فعال نیست.' }, { status: 409 });
+    await audit(patientId, actor, 'patient.dischargeRequested');
+    return Response.json({ ok: true });
+  }
+
+  if (body.action === 'approveDischarge') {
+    const patientId = String(body.patientId);
+    const result = await db.prepare("UPDATE patients SET status = 'discharged' WHERE id = ? AND status = 'discharge_pending'").bind(patientId).run();
+    if (!result.meta.changes) return Response.json({ error: 'این بیمار در انتظار تأیید ترخیص نیست.' }, { status: 409 });
     await audit(patientId, actor, 'patient.discharged');
     return Response.json({ ok: true });
   }
@@ -108,18 +134,16 @@ export async function POST(request: Request) {
   if (body.action === 'approveOrders') {
     const patientId = String(body.patientId);
     const isInitial = Boolean(body.isInitial);
-    const impression = typeof body.impression === 'string' ? body.impression : '';
-    const diet = typeof body.diet === 'string' ? body.diet : '';
-    const activity = typeof body.activity === 'string' ? body.activity : '';
+    const { impression, diet, activity, condition } = orderHeader(body);
     const items = (body.items as string[]).filter((item) => item.trim());
-    if (isInitial && (!impression || !diet || !activity)) {
-      return Response.json({ error: 'تکمیل تشخیص اولیه، رژیم غذایی و فعالیت الزامی است.' }, { status: 400 });
+    if (isInitial && !isCompleteHeader({ impression, diet, activity, condition })) {
+      return Response.json({ error: orderHeaderError }, { status: 400 });
     }
     const batchId = crypto.randomUUID();
     await db.prepare(
-      `INSERT INTO order_batches (id, patient_id, impression, diet, activity, is_initial, created_by, approved_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(batchId, patientId, impression || null, diet || null, activity || null, isInitial ? 1 : 0, actor, now, now).run();
+      `INSERT INTO order_batches (id, patient_id, impression, diet, activity, condition, is_initial, created_by, approved_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(batchId, patientId, impression || null, diet || null, activity || null, condition || null, isInitial ? 1 : 0, actor, now, now).run();
     if (items.length) {
       await db.batch(items.map((item) => db.prepare(
         `INSERT INTO order_items (id, batch_id, patient_id, text, is_done, created_at)
@@ -127,6 +151,68 @@ export async function POST(request: Request) {
       ).bind(crypto.randomUUID(), batchId, patientId, item.trim(), now)));
     }
     await audit(patientId, actor, 'orders.approved', `${items.length} دستور`);
+    return Response.json({ ok: true });
+  }
+
+  // Items can be reworded or removed; anything new goes in a new order. The audit keeps the old text.
+  if (body.action === 'editOrderBatch') {
+    const patientId = String(body.patientId);
+    const batchId = String(body.batchId);
+    const batch = await db.prepare(
+      'SELECT is_initial AS isInitial, impression, diet, activity, condition FROM order_batches WHERE id = ? AND patient_id = ?',
+    ).bind(batchId, patientId).first<OrderHeader & { isInitial: number }>();
+    if (!batch) return Response.json({ error: 'این دستور پیدا نشد.' }, { status: 404 });
+    const header = orderHeader(body);
+    if (batch.isInitial && !isCompleteHeader(header)) return Response.json({ error: orderHeaderError }, { status: 400 });
+
+    const current = await db.prepare('SELECT id, text FROM order_items WHERE batch_id = ?').bind(batchId).all<{ id: string; text: string }>();
+    const currentText = new Map(current.results.map((item) => [item.id, item.text]));
+    const kept = (Array.isArray(body.items) ? body.items as { id?: unknown; text?: unknown }[] : [])
+      .map((item) => ({ id: String(item.id), text: typeof item.text === 'string' ? item.text.trim() : '' }))
+      .filter((item) => item.text && currentText.has(item.id));
+    if (!kept.length) {
+      return Response.json({ error: 'حداقل یک آیتم باید بماند. برای حذف همه آیتم‌ها، کل دستور را حذف کنید.' }, { status: 400 });
+    }
+    const keptIds = new Set(kept.map((item) => item.id));
+    const changed = kept.filter((item) => item.text !== currentText.get(item.id));
+    const removed = current.results.filter((item) => !keptIds.has(item.id));
+    const headerKeys = (['impression', 'diet', 'activity', 'condition'] as const).filter((key) => batch.isInitial && (batch[key] ?? '') !== header[key]);
+
+    const statements = [
+      ...changed.map((item) => db.prepare('UPDATE order_items SET text = ? WHERE id = ?').bind(item.text, item.id)),
+      ...removed.map((item) => db.prepare('DELETE FROM order_items WHERE id = ?').bind(item.id)),
+    ];
+    if (headerKeys.length) {
+      statements.push(db.prepare('UPDATE order_batches SET impression = ?, diet = ?, activity = ?, condition = ? WHERE id = ?')
+        .bind(header.impression, header.diet, header.activity, header.condition, batchId));
+    }
+    if (!statements.length) return Response.json({ ok: true });
+    await db.batch(statements);
+    await audit(patientId, actor, 'orders.edited', [
+      ...headerKeys.map((key) => `${key}: «${batch[key] ?? ''}» به «${header[key]}»`),
+      ...changed.map((item) => `ویرایش: «${currentText.get(item.id)}» به «${item.text}»`),
+      ...removed.map((item) => `حذف: «${item.text}»`),
+    ].join(' · '));
+    return Response.json({ ok: true });
+  }
+
+  if (body.action === 'deleteOrderBatch') {
+    const patientId = String(body.patientId);
+    const batchId = String(body.batchId);
+    const batch = await db.prepare('SELECT is_initial AS isInitial FROM order_batches WHERE id = ? AND patient_id = ?')
+      .bind(batchId, patientId).first<{ isInitial: number }>();
+    if (!batch) return Response.json({ error: 'این دستور پیدا نشد.' }, { status: 404 });
+    // The initial order holds the impression, diet, activity and condition the later orders build on.
+    if (batch.isInitial) {
+      const others = await db.prepare('SELECT COUNT(*) AS count FROM order_batches WHERE patient_id = ? AND id != ?').bind(patientId, batchId).first<{ count: number }>();
+      if (others?.count) return Response.json({ error: 'تا وقتی دستور تکمیلی ثبت شده است، دستور اولیه حذف نمی‌شود. می‌توانید آن را ویرایش کنید.' }, { status: 409 });
+    }
+    const items = await db.prepare('SELECT text FROM order_items WHERE batch_id = ?').bind(batchId).all<{ text: string }>();
+    await db.batch([
+      db.prepare('DELETE FROM order_items WHERE batch_id = ?').bind(batchId),
+      db.prepare('DELETE FROM order_batches WHERE id = ?').bind(batchId),
+    ]);
+    await audit(patientId, actor, 'orders.deleted', items.results.map((item) => `«${item.text}»`).join(' · '));
     return Response.json({ ok: true });
   }
 

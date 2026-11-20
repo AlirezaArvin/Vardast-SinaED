@@ -1,4 +1,5 @@
 import {
+  activityOptions,
   airwayAssessmentOptions,
   airwayInterventionOptions,
   ampleFields,
@@ -6,6 +7,7 @@ import {
   breathingAssessmentOptions,
   breathingInterventionOptions,
   circulationInterventionOptions,
+  conditionOptions,
   consciousnessOptions,
   dietOptions,
   findingFields,
@@ -14,7 +16,7 @@ import {
 } from '@/lib/clinical-types';
 import type { HistoryDraft, OrdersDraft, TraumaForm } from '@/lib/clinical-types';
 
-import { completeJson, TRAUMA_LLM_MODEL } from './openrouter';
+import { completeJson, HISTORY_LLM_MODEL, TRAUMA_LLM_MODEL } from './openrouter';
 
 export type PatientContext = { sex: 'زن' | 'مرد'; age: number | null };
 
@@ -29,16 +31,22 @@ export const traumaKeyterms = [
   'Backboard', 'Log roll', 'Chest Tube', 'Packed Cell', 'MTP', 'Foley', 'PXR', 'AMPLE', 'Morison', 'Apnea', 'Gasping',
 ];
 
-const transcriptRules = `The user message is an automatic speech-recognition transcript of an Iranian physician dictating in Persian on a hospital ward.
+const transcriptRules = `The user message is an automatic speech-recognition transcript of an Iranian physician dictating in Persian on a hospital ward. It becomes part of the patient's medical record.
 The transcript may have little or no punctuation, recognition errors, numbers spoken as words, and English medical terms written in Persian script (for example "سی بی سی" means CBC).
 
 Rules:
 - Extract only what the physician actually said. Never invent, infer, or add clinical content.
 - If something was not mentioned, return an empty string (or an empty array) for it.
-- Fix obvious recognition errors only when the intended medical term is unambiguous.`;
+- In this clinical setting every word must be correct and meaningful. Speech recognition often replaces a word with one that sounds alike but makes no sense here (e.g. «تنگی نفت» for تنگی نفس, «سرفه خط دار» for سرفه خلط‌دار, «تندرست» for تندرنس, «سفت ریا کسون» for Ceftriaxone).
+  When a word is wrong or meaningless in context, replace only that word with the most probable word that fits the clinical context and sounds similar. Leave every other word as dictated.
+  Speech recognition also splits one medical term into pieces (e.g. «هایپو تنشن», «آموکسی سیلین»): join them into the one term. A corrected or joined term then follows the Latin-script rule below (Hypotension, Amoxicillin).
+  Never change a number, dose, unit, side (left/right) or negation this way: a wrong one still reads as meaningful, so guessing could silently corrupt the record.
+- Every medical term the physician said in a Latin-script language (English, or French-derived terms such as لاسراسیون) stays in Latin script with its standard English spelling: diagnoses, findings, anatomy, procedures, tests, drugs and abbreviations (e.g. Laceration, Tenderness, Pneumothorax, Occipital, CBC, Losartan). This applies whether the transcript has the term in Latin or in Persian script («لاسراسیون» → Laceration, «تندرنس» → Tenderness, «سی بی سی» → CBC).
+  A Persian-script word that is a transliteration of such a term counts too, even when it is common in Persian medical speech: «آپاندیسیت» → Appendicitis, «هایپوکندر» → Hypochondrium, «دفورمیتی» → Deformity, «فمور» → Femur, «گاردینگ» → Guarding, «هایپرتنشن» → Hypertension, «کانسالت» → Consult. Never translate such a term into a Persian word and never write it in Persian script.
+  Only native Persian words stay in Persian (e.g. درد، شکم، دنده، خونریزی، تب، سرفه).`;
 
 const transcriptContext = `${transcriptRules}
-- Write free text in concise, professional Persian. Keep drug names, lab tests and standard abbreviations in Latin script (e.g. Losartan, CBC).`;
+- Write free text in concise, professional Persian, with the Latin-script medical terms kept as above.`;
 
 const historySystem = `${transcriptContext}
 
@@ -50,7 +58,7 @@ Fill the admission history form:
 - onset: a short time phrase that reads naturally after «از» (e.g. سه روز پیش), without a leading «از».
 - statedSex and statedAge: the patient's sex (آقا or خانم) and age in years, only if the physician said them; otherwise empty.
 - history: the narrative of the present illness as dictated (it is rewritten in a later step). Leave it empty if the physician did not describe the complaint or the illness.
-- medicalHistory: all past medical history (previous diseases, prior test results such as an old EF), past surgical history (operations and procedures such as angiography) and family history. Put family history last, starting with «سابقه خانوادگی:».
+- medicalHistory: all past medical history (previous diseases, prior test results such as an old EF), past surgical history (operations and procedures such as angiography) and family history. Put family history last, starting with «سابقه خانوادگی:». If no family history was mentioned, never put «سابقه خانوادگی:». 
 - physicalExam: the physical examination findings by system (e.g. lungs, heart, abdomen), excluding vital signs, GCS and level of consciousness.
 - paraclinicalResults: results of lab tests, imaging, ECG and other para-clinical studies, keeping each test name with its exact value and unit.`;
 
@@ -81,10 +89,11 @@ const ordersSystem = `${transcriptContext}
 Fill the physician order sheet:
 - impression: the working diagnosis, if stated.
 - diet: map to an allowed value only if stated (ناشتا or ان‌پی‌او means NPO; رژیم معمولی means PO Regular). Otherwise empty.
-- activity: the activity order (e.g. استراحت در تخت), if stated.
+- activity: map to an allowed value only if stated (استراحت مطلق or استراحت در تخت means CBR; خارج از تخت or نشستن کنار تخت means OOB; راه رفتن or حرکت آزاد means Ambulate). Otherwise empty.
+- condition: the patient's condition, mapped to an allowed value only if stated (بحرانی or بدحال means Critical; اورژانسی means Emergent; فوری means Urgent; نسبتاً خوب or متوسط means Fair; خوب or پایدار means Good). Otherwise empty.
 - items: every other order as a separate item, in the dictated order: each lab test, imaging study, consult, nursing instruction and medication is its own item.
   Write medications in standard form, e.g. "Ceftriaxone 1 g IV q12h". Never change a dose, route or frequency, and never add one that was not said.
-  Do not put the impression, diet or activity in items.`;
+  Do not put the impression, diet, activity or condition in items.`;
 
 const historyFieldDescriptions = {
   chiefComplaint: 'علت مراجعه / شکایت اصلی',
@@ -132,11 +141,12 @@ const historySchema = {
 const ordersSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['impression', 'diet', 'activity', 'items'],
+  required: ['impression', 'diet', 'activity', 'condition', 'items'],
   properties: {
-    impression: { type: 'string', description: 'تشخیص اولیه' },
+    impression: { type: 'string', description: 'Working diagnosis (تشخیص اولیه), with Latin-script medical terms kept in Latin' },
     diet: { type: 'string', enum: ['', ...dietOptions], description: 'رژیم غذایی' },
-    activity: { type: 'string', description: 'فعالیت' },
+    activity: { type: 'string', enum: ['', ...activityOptions], description: 'فعالیت' },
+    condition: { type: 'string', enum: ['', ...conditionOptions], description: 'وضعیت بیمار' },
     items: { type: 'array', items: { type: 'string' }, description: 'One entry per separate order' },
   },
 };
@@ -174,7 +184,7 @@ function openingSentence(draft: HistoryDraft, statedSex: string, statedAge: stri
 }
 
 export async function structureHistory(transcript: string, patient: PatientContext | null): Promise<HistoryDraft> {
-  const raw = (await completeJson(historySystem, transcript, 'admission_history', historySchema)) as Record<string, unknown>;
+  const raw = (await completeJson(historySystem, transcript, 'admission_history', historySchema, 'low', HISTORY_LLM_MODEL)) as Record<string, unknown>;
   const draft = Object.fromEntries(historyKeys.map((key) => [key, numericKeys.has(key) ? digits(raw[key]) : text(raw[key])])) as HistoryDraft;
   draft.consciousness = oneOf(raw.consciousness, consciousnessOptions);
   draft.chiefComplaint = withoutLeadingAz(draft.chiefComplaint);
@@ -189,7 +199,7 @@ ${opening}
 
 Transcript:
 ${transcript}`;
-    const narrative = (await completeJson(narrativeSystem, message, 'history_narrative', narrativeSchema, 'medium')) as Record<string, unknown>;
+    const narrative = (await completeJson(narrativeSystem, message, 'history_narrative', narrativeSchema, 'medium', HISTORY_LLM_MODEL)) as Record<string, unknown>;
     draft.history = [opening, text(narrative.continuation)].filter(Boolean).join(' ');
   }
   return draft;
@@ -198,20 +208,20 @@ ${transcript}`;
 export async function structureOrders(transcript: string): Promise<OrdersDraft> {
   const raw = (await completeJson(ordersSystem, transcript, 'physician_orders', ordersSchema)) as Record<string, unknown>;
   const items = Array.isArray(raw.items) ? raw.items.map(text).filter(Boolean).slice(0, 50) : [];
-  return { impression: text(raw.impression), diet: oneOf(raw.diet, dietOptions), activity: text(raw.activity), items };
+  return { impression: text(raw.impression), diet: oneOf(raw.diet, dietOptions), activity: oneOf(raw.activity, activityOptions), condition: oneOf(raw.condition, conditionOptions), items };
 }
 
 const traumaSystem = `${transcriptRules}
-- Write every free-text value in concise, professional written Persian, as the physician would chart it (e.g. «لاسراسیون 3 سانتی‌متری در ناحیه اکسیپیتال، بدون خونریزی فعال»). Keep standard abbreviations and drug names in Latin script (e.g. EFAST, PTX, GCS, Morison) and write numbers with Latin digits.
+- Write every free-text value in concise, professional written Persian, as the physician would chart it, with the Latin-script medical terms kept as above (e.g. «Laceration 3 سانتی‌متری در ناحیه Occipital، بدون خونریزی فعال»; EFAST, PTX, GCS, Morison). Write numbers with Latin digits.
 
 Fill the multiple trauma form. Tick an option only if the physician said it or used a clear Persian equivalent; never infer one option from another (an MVC does not imply Blunt).
 - arrival: what the patient arrived with or received before reaching the ED. AM or PM is the arrival time (صبح/قبل از ظهر → AM, بعد از ظهر/عصر/شب → PM). Airway is a prehospital airway device in general, Oral an oral airway, ETT an endotracheal tube (لوله تراشه، اینتوبه آمده). تخته پشتی → Backboard, کولار گردنی → Cervical Collar, آتل → Splinting, رگ/آنژیوکت → IV Line, اکسیژن → O2, دارو → Medication, احیا → CPR.
-- mechanism: تصادف → MVC; عابر پیاده → Pedestrian; سرنشین → Passenger; راننده (including راننده موتور) → Driver; خودرو/ماشین → Car; موتور/موتورسیکلت → Motor; دوچرخه → Bicycle; سقوط/زمین خوردن → Fall; سقوط از ارتفاع → Fall and Height; نزاع/ضرب و جرح → Assault; بلانت/غیرنافذ → Blunt; نافذ → Penetrating; چاقو/ضربه چاقو → Stab; گلوله/اسلحه گرم → GSW; SGW only if the physician says SGW. A mechanism not in the list (e.g. سوختگی، گاز گرفتگی) goes in mechanismOther, in Persian.
+- mechanism: تصادف → MVC; عابر پیاده → Pedestrian; سرنشین → Passenger; راننده (including راننده موتور) → Driver; خودرو/ماشین → Car; موتور/موتورسیکلت → Motor; دوچرخه → Bicycle; سقوط/زمین خوردن → Fall; سقوط از ارتفاع → Fall and Height; نزاع/ضرب و جرح → Assault; بلانت/غیرنافذ → Blunt; نافذ → Penetrating; چاقو/ضربه چاقو → Stab; گلوله/اسلحه گرم → GSW; SGW only if the physician says SGW. A mechanism not in the list (e.g. سوختگی، گاز گرفتگی) goes in mechanismOther.
 - Some options appear in more than one list. Put each item where the physician placed it: a finding in an Assessments list, a procedure done in the ED in an intervention list, and something the patient arrived with from the prehospital team in arrival.
   Gasping and Apnea: tick them under airwayAssessment, breathingAssessment, or both, matching what was described; if unclear, tick both.
   Intubation done to secure the airway goes in airwayIntervention; set disabilityIntubation only when the intubation is linked to a low GCS or decreased consciousness.
 - Breathing: any comment on breath sounds (صدای تنفس، کاهش صدای ریه) → Breathing Sound, and also describe it in the chest finding. پنوموتوراکس فشارنده → Tension PTX, هموتوراکس ماسیو → Massive HTX, قفسه سینه مواج → Flail Chest, تنفس نرمال/طبیعی → Normal. Needle Tracheostomy is needle decompression of the chest.
-- Circulation: set activeExternalBleeding and bleedingLocation (in Persian) if active external bleeding is described; set internalBleeding and its sites (Chest, Abdomen, Pelvis, Long Bones Deformity) if internal bleeding is described; a deformity of a long bone (femur, tibia, humerus, ساق، ران، بازو، دفورمیتی) always sets internalBleeding and Long Bones Deformity. پک سل/پکد سل → Packed Cell, with the number of units in packedCellUnits if said. CR is the capillary refill time in seconds. efast: the EFAST/FAST result in Persian.
+- Circulation: set activeExternalBleeding and bleedingLocation if active external bleeding is described; set internalBleeding and its sites (Chest, Abdomen, Pelvis, Long Bones Deformity) if internal bleeding is described; a deformity of a long bone (femur, tibia, humerus, ساق، ران، بازو، دفورمیتی) always sets internalBleeding and Long Bones Deformity. پک سل/پکد سل → Packed Cell, with the number of units in packedCellUnits if said. CR is the capillary refill time in seconds. efast: the EFAST/FAST result.
 - Numeric fields (o2Sat, respiratoryRate, systolic, diastolic, pulse, capillaryRefill, packedCellUnits, gcs*) contain Latin digits only, no units. Convert spoken numbers word by word and exactly: «نود و یک» is 91, «صد و بیست» is 120, «صد و ده» is 110, «هشتاد و پنج» is 85. Take each value from the words right after its label (نبض/پی آر → pulse, ساچوریشن/اشباع → o2Sat, تنفس/آر آر → respiratoryRate). Split blood pressure "120 روی 80" into systolic 120 and diastolic 80.
 - GCS components: fill them only if stated individually, or if the total is 15 (V5 M6 E4) or 3 (all 1). Otherwise leave them empty.
 - exposeLogRoll: only findings the physician explicitly reported on exposure or log roll (اکسپوز، لاگ رول، پشت بیمار); otherwise empty. hypothermiaPrevention: true only if warming or hypothermia prevention was mentioned.
@@ -219,24 +229,26 @@ Fill the multiple trauma form. Tick an option only if the physician said it or u
 - Subject findings: the secondary-survey examination by body region. Use each region field only for that region; neurologicExam is the neurological examination, vascular is the pulses and perfusion of the limbs.
   Region fields hold examination findings only: never repeat an intervention or device (chest tube, collar, pelvic wrapping), a vital sign, or the GCS, since those have their own fields. Leave a region empty if no finding was reported for it.`;
 
+const inPersian = 'in Persian, Latin-script medical terms kept in Latin';
+
 const traumaFieldDescriptions: Record<string, string> = {
-  mechanismOther: 'Mechanism not in the list, in Persian',
+  mechanismOther: `Mechanism not in the list, ${inPersian}`,
   o2Sat: 'O2 saturation percent, digits only',
   respiratoryRate: 'Respiratory rate per minute, digits only',
-  bleedingLocation: 'Location of active external bleeding, in Persian',
+  bleedingLocation: `Location of active external bleeding, ${inPersian}`,
   systolic: 'Systolic blood pressure, digits only',
   diastolic: 'Diastolic blood pressure, digits only',
   pulse: 'Pulse rate per minute, digits only',
   capillaryRefill: 'Capillary refill time in seconds, digits only',
-  efast: 'EFAST result, in Persian',
+  efast: `EFAST result, ${inPersian}`,
   packedCellUnits: 'Number of packed cell units, digits only',
   gcsVerbal: 'GCS verbal 1-5, digits only',
   gcsMotor: 'GCS motor 1-6, digits only',
   gcsEye: 'GCS eye 1-4, digits only',
-  pupil: 'Pupil findings, in Persian',
-  sensoryMotorLevel: 'Sensory and motor level, in Persian',
-  exposeLogRoll: 'Expose & log roll findings, in Persian',
-  ...Object.fromEntries([...ampleFields, ...findingFields].map(([key, label]) => [key, `${label}, in Persian`])),
+  pupil: `Pupil findings, ${inPersian}`,
+  sensoryMotorLevel: `Sensory and motor level, ${inPersian}`,
+  exposeLogRoll: `Expose & log roll findings, ${inPersian}`,
+  ...Object.fromEntries([...ampleFields, ...findingFields].map(([key, label]) => [key, `${label}, ${inPersian}`])),
 };
 
 const traumaLists = {
